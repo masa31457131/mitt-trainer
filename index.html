@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0B0E14">
+<title>ARミット打ち</title>
+<!--
+  ARミット打ち（ホームボクシング道場）
+  ------------------------------------------------------------
+  ■ 何をするか
+    スマホのインカメラで上半身の動き（肩・肘・手首）を検出し、
+    画面の奥から飛んでくる3Dミットを、指定されたパンチで打ち分ける練習ゲーム。
+  ■ 動かし方（前提条件）
+    ・HTTPS のURLで開くこと（カメラはHTTPSでないと使えない）。
+      例：GitHub Pages / Netlify などにこの index.html を1枚置くだけ。
+      PCで試すなら `python -m http.server` で http://localhost:8000 でも可。
+    ・インターネット接続が必要（3D描画ライブラリと姿勢推定AIモデルをCDNから読み込む）。
+    ・対応：iPhone Safari（iOS 16以降推奨）/ Android Chrome / PC Chrome。
+  ■ 使っているもの
+    ・Three.js r128（3D描画） … cdnjs
+    ・MediaPipe Tasks Vision 0.10.14 Pose Landmarker lite（姿勢推定） … jsDelivr / Google Storage
+  ■ データ保存
+    ・ベストスコアと履歴はこの端末のブラウザ内（localStorage）にのみ保存。サーバー送信なし。
+    ・カメラ映像は端末内で処理するだけで、どこにも送信・保存しない。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: full-screen layers — camera video (bottom) → 3D canvas → skeleton overlay → HUD/menus (top). Single dark "gym at night" theme on purpose. */
+:root{
+  color-scheme:dark;
+  --bg:#0B0E14; --panel:#151A24; --line:#2A3242; --ink:#F1F3F7; --muted:#98A1B3;
+  --left:#E5384F;   /* 左手ミット＝赤 */
+  --right:#3B8BEB;  /* 右手ミット＝青 */
+  --gold:#FFC93C; --ok:#3DBE74;
+  --f-display:"Saira Condensed","Arial Narrow",Impact,sans-serif;
+  --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.num{font-family:var(--f-display);font-variant-numeric:tabular-nums}
+
+#video,#three,#skel{position:fixed;inset:0;width:100%;height:100%}
+#video{object-fit:cover;transform:scaleX(-1);filter:brightness(.55) saturate(.7)}
+#skel{pointer-events:none}
+#three{pointer-events:none}
+
+/* menu */
+.screen{position:fixed;inset:0;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 20px) 16px calc(env(safe-area-inset-bottom,0px) + 24px);background:var(--bg);z-index:20}
+.wrap{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.logo{font-family:var(--f-display);font-weight:800;font-size:44px;line-height:.95;letter-spacing:.02em}
+.logo .l{color:var(--left)} .logo .r{color:var(--right)}
+.lead{color:var(--muted);font-size:14px;line-height:1.7;margin:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:9px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .k{font-weight:500;font-size:15px}
+.seg{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.seg button{border:1px solid var(--line);background:transparent;border-radius:99px;padding:6px 12px;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700}
+.btn{border:0;border-radius:12px;padding:15px 18px;font-weight:700;font-size:17px;width:100%;background:var(--left);color:#fff}
+.btn.sub{background:transparent;border:1px solid var(--line);font-size:15px;padding:12px}
+.legend{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.legend div{border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center;font-size:12px;color:var(--muted)}
+.legend b{display:block;font-family:var(--f-display);font-size:26px;line-height:1;color:var(--ink)}
+.legend .L b{color:var(--left)} .legend .R b{color:var(--right)}
+.tips{margin:0;padding-left:1.2em;color:var(--muted);font-size:13px;line-height:1.8}
+.best{font-size:13px;color:var(--muted)}
+
+/* HUD */
+#hud{position:fixed;inset:0;z-index:10;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px calc(env(safe-area-inset-bottom,0px) + 12px)}
+.hudtop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;text-shadow:0 2px 8px rgba(0,0,0,.6)}
+.hudtop .score{font-family:var(--f-display);font-weight:800;font-size:44px;line-height:.9}
+.hudtop .lab{font-size:11px;letter-spacing:.12em;color:var(--muted);font-weight:700}
+.hudtop .time{font-family:var(--f-display);font-weight:800;font-size:34px;line-height:.9;text-align:right}
+.hudtop .combo{font-family:var(--f-display);font-weight:800;font-size:22px;color:var(--gold);text-align:center}
+#fb{position:fixed;left:0;right:0;top:38%;text-align:center;z-index:11;pointer-events:none;font-family:var(--f-display);font-weight:800;font-size:clamp(40px,12vw,84px);letter-spacing:.04em;text-shadow:0 4px 18px rgba(0,0,0,.7)}
+#fbSub{position:fixed;left:16px;right:16px;top:calc(38% + clamp(48px,13vw,92px));text-align:center;z-index:11;pointer-events:none;font-size:clamp(15px,4vw,22px);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
+.pop{animation:pop .5s ease-out}
+@keyframes pop{0%{transform:scale(1.4);opacity:0}25%{opacity:1}100%{transform:scale(1);opacity:1}}
+.hudbot{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
+#detect{font-size:13px;background:rgba(0,0,0,.55);border:1px solid var(--line);border-radius:10px;padding:6px 10px;max-width:60%}
+#detect b{font-size:16px}
+#stopBtn{pointer-events:auto;border:1px solid rgba(255,255,255,.5);background:rgba(0,0,0,.45);border-radius:10px;padding:8px 14px;font-size:14px}
+#status{position:fixed;left:16px;right:16px;top:30%;z-index:12;text-align:center;font-size:18px;font-weight:700;line-height:1.7;text-shadow:0 2px 10px #000;pointer-events:none}
+#status .big{font-family:var(--f-display);font-size:96px;line-height:1;display:block;color:var(--gold)}
+
+/* tap pad (no-camera mode) */
+#pad{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 56px);z-index:13;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;padding:0 10px}
+#pad button{border:0;border-radius:10px;padding:10px 0 8px;font-family:var(--f-display);font-weight:800;font-size:24px;line-height:1;color:#fff;display:flex;flex-direction:column;align-items:center;gap:2px}
+#pad button span{font-family:var(--f-body);font-size:10px;font-weight:500}
+#pad .L{background:var(--left)} #pad .R{background:var(--right)}
+
+/* result */
+.res-score{font-family:var(--f-display);font-weight:800;font-size:84px;line-height:.9}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.grid3 .v{font-family:var(--f-display);font-weight:800;font-size:28px}
+.grid3 .k{font-size:11px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:7px 4px;border-top:1px solid var(--line);text-align:left}
+th{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.06em;border-top:0}
+td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;background:var(--ok)}
+.err{color:#FF8A8A;font-size:13px;line-height:1.7}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay hidden></video>
+<canvas id="three"></canvas>
+<canvas id="skel"></canvas>
+
+<!-- ===== MENU ===== -->
+<section class="screen" id="menu">
+  <div class="wrap">
+    <div class="logo">AR<span class="l">MITT</span><span class="r">WORK</span></div>
+    <p class="lead">奥から飛んでくるミットを、書かれたパンチで打ち抜こう。<b style="color:var(--left)">赤＝左手</b>、<b style="color:var(--right)">青＝右手</b>。カメラがあなたの腕の動きを見て、ジャブ・ストレート・フック・アッパーを判定します。</p>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="panel">
+      <div class="row"><span class="k">構え</span><div class="seg" data-key="stance"></div></div>
+      <div class="row"><span class="k">レベル</span><div class="seg" data-key="level"></div></div>
+      <div class="row"><span class="k">メニュー</span><div class="seg" data-key="prog"></div></div>
+      <div class="row"><span class="k">時間</span><div class="seg" data-key="dur"></div></div>
+      <div class="row"><span class="k">判定の感度</span><div class="seg" data-key="sens"></div></div>
+      <div class="row"><span class="k">音声コール</span><div class="seg" data-key="voice"></div></div>
+      <div class="row"><span class="k">骨格表示</span><div class="seg" data-key="skel"></div></div>
+    </div>
+
+    <button class="btn" id="startCam">カメラで始める</button>
+    <button class="btn sub" id="startTap">カメラなしで試す（タップ／キー1〜6）</button>
+    <div class="err" id="err" hidden></div>
+    <div class="best" id="best"></div>
+
+    <div class="panel">
+      <ul class="tips">
+        <li>スマホは<b>横向き</b>で胸〜顔の高さに立てかけ、<b>1.5〜2m</b>離れて上半身全体（両肩・両手）が映るように。</li>
+        <li>明るい部屋で、背景はなるべくシンプルに。服と背景の色が近いと判定が落ちます。</li>
+        <li>ストレートは<b>カメラに向かってまっすぐ</b>、フックは<b>横から内側へ</b>、アッパーは<b>下から上へ</b>。動きを少し大きめにすると判定が安定します。</li>
+        <li>周りに物や人がいないか確認してから始めてください。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===== HUD ===== -->
+<div id="hud" hidden>
+  <div class="hudtop">
+    <div><div class="lab">SCORE</div><div class="score num" id="hScore">0</div></div>
+    <div class="combo num" id="hCombo"></div>
+    <div><div class="lab" style="text-align:right">TIME</div><div class="time num" id="hTime">1:00</div></div>
+  </div>
+  <div class="hudbot">
+    <div id="detect">判定：<b id="hDet">—</b></div>
+    <button id="stopBtn">終了</button>
+  </div>
+</div>
+<div id="fb"></div>
+<div id="fbSub"></div>
+<div id="status" hidden></div>
+<div id="pad" hidden></div>
+
+<!-- ===== RESULT ===== -->
+<section class="screen" id="result" hidden>
+  <div class="wrap">
+    <div class="best" style="letter-spacing:.12em;font-weight:700">RESULT</div>
+    <div class="res-score num" id="rScore">0</div>
+    <div id="rBest" class="best"></div>
+    <div class="panel grid3">
+      <div><div class="v num" id="rAcc">0%</div><div class="k">命中率</div></div>
+      <div><div class="v num" id="rMax">0</div><div class="k">最大コンボ</div></div>
+      <div><div class="v num" id="rPerf">0</div><div class="k">PERFECT</div></div>
+    </div>
+    <div class="panel">
+      <table>
+        <thead><tr><th>パンチ</th><th>命中</th><th style="text-align:right">打ち間違い</th><th style="text-align:right">見逃し</th></tr></thead>
+        <tbody id="rTable"></tbody>
+      </table>
+    </div>
+    <p class="lead" id="rAdvice"></p>
+    <button class="btn" id="again">もう一度</button>
+    <button class="btn sub" id="toMenu">メニューへ</button>
+  </div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script type="module">
+/* =====================================================================
+   設定・マスターデータ
+   ===================================================================== */
+const MP_VER = "0.10.14";
+const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+
+// パンチ番号：1ジャブ 2ストレート 3前手フック 4後ろ手フック 5前手アッパー 6後ろ手アッパー
+// kind: straight / hook / upper、lead: 前手かどうか
+const PUNCH = {
+  1:{kind:"straight",lead:true}, 2:{kind:"straight",lead:false},
+  3:{kind:"hook",lead:true},     4:{kind:"hook",lead:false},
+  5:{kind:"upper",lead:true},    6:{kind:"upper",lead:false},
+};
+const OPT = {
+  stance:{label:{orth:"オーソドックス",south:"サウスポー"},def:"orth"},
+  level:{label:{easy:"初級",mid:"中級",hard:"上級"},def:"easy"},
+  prog:{label:{basic:"ジャブ・ストレート",hook:"フック入り",all:"全部"},def:"basic"},
+  dur:{label:{60:"1分",90:"1分半",180:"3分"},def:"60"},
+  sens:{label:{low:"低",mid:"中",high:"高"},def:"mid"},
+  voice:{label:{on:"あり",off:"なし"},def:"on"},
+  skel:{label:{on:"表示",off:"非表示"},def:"off"},
+};
+const LEVEL = { // approach=ミットが奥から届くまでの秒数, step=コンボ内の間隔, gap=コンボ間の休み, win=判定の許容秒
+  easy:{approach:2.4,step:0.75,gap:1.8,win:0.5,mult:1},
+  mid: {approach:1.8,step:0.55,gap:1.3,win:0.4,mult:1.4},
+  hard:{approach:1.3,step:0.42,gap:0.9,win:0.32,mult:1.9},
+};
+const COMBOS = {
+  basic:["1","1-1","1-2","1-1-2","2","1-2-1"],
+  hook:["1-2","1-2-3","3-2","1-3","2-3-2","1-2-3-2"],
+  all:["1-2","1-2-3","1-2-5-2","3-2","5-2-3","1-6-3-2","2-3-2","1-2-3-4","5-6"],
+};
+const SENS = {low:1.35,mid:1.0,high:0.72}; // 判定しきい値に掛ける係数（小さいほど敏感）
+
+let cfg = {};
+try{ cfg = JSON.parse(localStorage.getItem("arm_cfg")||"{}"); }catch(e){}
+for(const k in OPT) if(!(cfg[k] in OPT[k].label)) cfg[k]=OPT[k].def;
+const saveCfg=()=>{try{localStorage.setItem("arm_cfg",JSON.stringify(cfg));}catch(e){}};
+
+const $=s=>document.querySelector(s);
+
+// 構えに応じて「どちらの手か」と表示名を決める
+function handOf(id){ const lead=PUNCH[id].lead; const orth=cfg.stance==="orth"; return (lead===orth)?"L":"R"; }
+function nameOf(id){
+  const p=PUNCH[id], side=handOf(id)==="L"?"左":"右";
+  if(p.kind==="straight") return p.lead?"ジャブ":"ストレート";
+  return side+(p.kind==="hook"?"フック":"アッパー");
+}
+function idFrom(hand,kind){ for(const id in PUNCH){ if(PUNCH[id].kind===kind && handOf(id)===hand) return Number(id);} return 0; }
+
+/* =====================================================================
+   メニュー描画
+   ===================================================================== */
+function renderMenu(){
+  document.querySelectorAll(".seg").forEach(seg=>{
+    const k=seg.dataset.key;
+    seg.innerHTML=Object.entries(OPT[k].label).map(([v,l])=>`<button aria-pressed="${String(cfg[k])===v}" data-v="${v}">${l}</button>`).join("");
+  });
+  $("#legend").innerHTML=[1,2,3,4,5,6].map(id=>`<div class="${handOf(id)}"><b>${id}</b>${nameOf(id)}</div>`).join("");
+  const best=loadBest()[cfg.level];
+  $("#best").textContent=best?`${OPT.level.label[cfg.level]}のベスト：${best} 点`:"";
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest(".seg button"); if(!b) return;
+  cfg[b.parentElement.dataset.key]=b.dataset.v; saveCfg(); renderMenu();
+});
+function loadBest(){try{return JSON.parse(localStorage.getItem("arm_best")||"{}");}catch(e){return {};}}
+
+/* =====================================================================
+   音（Web Audio で生成。外部音源ファイル不要）
+   ===================================================================== */
+let ac=null;
+function audio(){ if(!ac){try{ac=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}} if(ac&&ac.state==="suspended")ac.resume(); return ac;}
+function sndHit(perfect){ const c=audio(); if(!c)return; const t=c.currentTime;
+  const len=0.12, buf=c.createBuffer(1,c.sampleRate*len,c.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);
+  const n=c.createBufferSource(); n.buffer=buf; const f=c.createBiquadFilter(); f.type="lowpass"; f.frequency.value=perfect?2600:1600;
+  const g=c.createGain(); g.gain.value=0.9; n.connect(f).connect(g).connect(c.destination); n.start(t);
+  const o=c.createOscillator(), og=c.createGain(); o.frequency.setValueAtTime(140,t); o.frequency.exponentialRampToValueAtTime(50,t+0.12);
+  og.gain.setValueAtTime(0.7,t); og.gain.exponentialRampToValueAtTime(0.001,t+0.15); o.connect(og).connect(c.destination); o.start(t); o.stop(t+0.16);
+}
+function sndMiss(){ const c=audio(); if(!c)return; const t=c.currentTime, o=c.createOscillator(), g=c.createGain();
+  o.type="sawtooth"; o.frequency.setValueAtTime(180,t); o.frequency.linearRampToValueAtTime(110,t+0.18);
+  g.gain.setValueAtTime(0.12,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2); o.connect(g).connect(c.destination); o.start(t); o.stop(t+0.21);}
+function bell(n=1){ const c=audio(); if(!c)return; for(let i=0;i<n;i++){const t=c.currentTime+i*0.4;
+  [523,1046,1568].forEach((f,j)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;
+  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.3/(j+1),t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+1.2);
+  o.connect(g).connect(c.destination);o.start(t);o.stop(t+1.3);});}}
+let jaVoice=null;
+function pickVoice(){try{jaVoice=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.startsWith("ja"))||null;}catch(e){}}
+if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice;}
+function speak(t){ if(cfg.voice!=="on"||!("speechSynthesis" in window))return;
+  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="ja-JP";if(jaVoice)u.voice=jaVoice;u.rate=1.5;speechSynthesis.speak(u);}catch(e){} }
+
+/* =====================================================================
+   3D シーン（Three.js）
+   ===================================================================== */
+const renderer=new THREE.WebGLRenderer({canvas:$("#three"),alpha:true,antialias:true});
+renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(0x0B0E14,18,42);
+const cam=new THREE.PerspectiveCamera(60,1,0.1,100);
+scene.add(new THREE.HemisphereLight(0xffffff,0x334466,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,0.9); sun.position.set(2,4,5); scene.add(sun);
+
+const HIT_Z=-3.2, SPAWN_Z=-40;
+let halfW=1, halfH=1;
+function resize(){
+  const w=innerWidth,h=innerHeight; renderer.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix();
+  halfH=Math.tan(THREE.MathUtils.degToRad(30))*Math.abs(HIT_Z); halfW=halfH*cam.aspect;
+  const sk=$("#skel"); sk.width=w*devicePixelRatio; sk.height=h*devicePixelRatio;
+}
+addEventListener("resize",resize); resize();
+
+// 床のグリッド（奥行き感を出すため）
+const grid=new THREE.GridHelper(80,40,0x2A3242,0x1A2030); grid.position.set(0,-2.2,-20); scene.add(grid);
+
+const COL={L:0xE5384F,R:0x3B8BEB};
+function labelTex(id){
+  const c=document.createElement("canvas"); c.width=256; c.height=128; const x=c.getContext("2d");
+  x.fillStyle="rgba(0,0,0,.55)"; x.beginPath(); x.roundRect?x.roundRect(8,8,240,112,24):x.rect(8,8,240,112); x.fill();
+  x.fillStyle="#fff"; x.textAlign="center"; x.textBaseline="middle";
+  x.font="800 64px 'Saira Condensed', Impact, sans-serif"; x.fillText(String(id),56,66);
+  x.font="700 34px 'Noto Sans JP', sans-serif"; x.fillText(nameOf(id),160,66);
+  const t=new THREE.CanvasTexture(c); return t;
+}
+function makeMitt(id){
+  const hand=handOf(id), kind=PUNCH[id].kind, g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.62,0.38,40),new THREE.MeshStandardMaterial({color:COL[hand],roughness:.45,transparent:true}));
+  body.rotation.x=Math.PI/2; g.add(body);
+  const face=new THREE.Mesh(new THREE.CircleGeometry(0.43,40),new THREE.MeshStandardMaterial({color:0xF4F1EC,roughness:.6,transparent:true}));
+  face.position.z=0.2; g.add(face);
+  const dot=new THREE.Mesh(new THREE.CircleGeometry(0.15,32),new THREE.MeshBasicMaterial({color:COL[hand],transparent:true}));
+  dot.position.z=0.205; g.add(dot);
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(0.58,0.06,12,40),new THREE.MeshStandardMaterial({color:0x111111,transparent:true}));
+  rim.position.z=0.1; g.add(rim);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:labelTex(id),transparent:true,depthTest:false}));
+  sp.scale.set(1.3,0.65,1); sp.position.set(0,0.95,0); g.add(sp);
+  // 向き：フックは内側を向く（横から打つ面）、アッパーは下向き（下から打つ面）
+  const side=hand==="L"?-1:1;
+  if(kind==="hook") g.rotation.y = side*0.85; // 左フック用は左向き、右フック用は右向き
+  if(kind==="upper") g.rotation.x = 0.9;
+  if(kind==="hook") sp.position.set(-side*0.3,0.95,0);
+  return g;
+}
+function targetPos(id){
+  const hand=handOf(id), kind=PUNCH[id].kind, s=hand==="L"?-1:1; // 鏡像表示：左手は画面の左側
+  const W=Math.min(halfW,halfH*1.2);
+  if(kind==="straight") return new THREE.Vector3(s*W*0.28, halfH*0.05, HIT_Z);
+  if(kind==="hook")     return new THREE.Vector3(s*W*0.68, 0, HIT_Z);
+  return new THREE.Vector3(s*W*0.32, -halfH*0.32, HIT_Z);
+}
+function mittScale(){ return Math.max(0.35,Math.min(0.62,Math.min(halfW,halfH)*0.3)); } // 画面の短い辺に合わせて大きさを決める
+
+// 命中時の破片
+const sparks=[];
+function burst(pos,color,perfect){
+  const n=perfect?26:16;
+  for(let i=0;i<n;i++){
+    const m=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,6),new THREE.MeshBasicMaterial({color:perfect?0xFFC93C:color,transparent:true}));
+    m.position.copy(pos); const v=new THREE.Vector3((Math.random()-.5)*6,(Math.random()-.3)*6,Math.random()*4);
+    scene.add(m); sparks.push({m,v,life:0.6});
+  }
+  const ring=new THREE.Mesh(new THREE.RingGeometry(0.5,0.62,40),new THREE.MeshBasicMaterial({color:perfect?0xFFC93C:0xffffff,transparent:true,side:THREE.DoubleSide}));
+  ring.position.copy(pos); scene.add(ring); sparks.push({m:ring,ring:true,life:0.4});
+}
+
+/* =====================================================================
+   姿勢推定（MediaPipe Pose Landmarker）とパンチ判定
+   ===================================================================== */
+const video=$("#video");
+let landmarker=null, lastVideoTime=-1, lastPose=null;
+async function initPose(onProgress){
+  onProgress("AIモデルを読み込み中…（初回は10〜20秒）");
+  const vision=await import(`${MP_URL}/vision_bundle.mjs`);
+  const fileset=await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+  const opts=d=>({baseOptions:{modelAssetPath:MODEL_URL,delegate:d},runningMode:"VIDEO",numPoses:1,
+    minPoseDetectionConfidence:0.5,minPosePresenceConfidence:0.5,minTrackingConfidence:0.5});
+  try{ landmarker=await vision.PoseLandmarker.createFromOptions(fileset,opts("GPU")); }
+  catch(e){ console.warn("GPU失敗→CPUで再試行",e); landmarker=await vision.PoseLandmarker.createFromOptions(fileset,opts("CPU")); }
+}
+async function initCamera(){
+  if(!navigator.mediaDevices?.getUserMedia) throw new Error("NO_API");
+  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:960},height:{ideal:540}},audio:false});
+  video.srcObject=stream; video.hidden=false; await video.play();
+}
+function stopCamera(){ const s=video.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); video.srcObject=null; video.hidden=true; }
+
+/*
+  判定の考え方（なぜこうしたか）
+  ・スマホ1台のカメラでは奥行き（カメラに向かう動き）が一番取りにくい。
+    そこで「上下左右」は画像上の座標（安定）、「前後」はAIが推定する3D座標のz（やや不安定）を使い、
+    どちらも"肩幅"を1とした単位にそろえて体格・距離の差を吸収する。
+  ・手首が短時間（約0.15秒）で一定以上動いたら「パンチ」とみなし、動いた方向で種類を決める：
+      横方向に内側へ大きく → フック / 上方向に大きく → アッパー / それ以外で前へ → ストレート
+  ・打った後に手を戻す動きを誤判定しないよう、各手に0.32秒のクールダウンと「内側へ」「上へ」「前へ」の条件を付ける。
+*/
+const WIN_MS=150, COOLDOWN=320;
+const track={L:{hist:[],cool:0},R:{hist:[],cool:0}};
+let lastDetect={text:"—",vals:""};
+function smooth(prev,cur,a=0.55){ return prev?{x:prev.x+(cur.x-prev.x)*a,y:prev.y+(cur.y-prev.y)*a,z:prev.z+(cur.z-prev.z)*a}:cur; }
+function analyzePose(res,nowMs){
+  const lm=res.landmarks?.[0], wl=res.worldLandmarks?.[0];
+  if(!lm||!wl){ lastPose=null; return; }
+  lastPose=lm;
+  // MediaPipeの「左」＝本人の左。11/12肩 13/14肘 15/16手首
+  const sw2=Math.hypot(lm[11].x-lm[12].x,lm[11].y-lm[12].y)||0.2;    // 画像上の肩幅
+  const swW=Math.hypot(wl[11].x-wl[12].x,wl[11].y-wl[12].y,wl[11].z-wl[12].z)||0.35; // 3Dの肩幅(m)
+  const midX=(lm[11].x+lm[12].x)/2, shY=(lm[11].y+lm[12].y)/2;
+  for(const [hand,wi,si] of [["L",15,11],["R",16,12]]){
+    const w=lm[wi], vis=(w.visibility??1);
+    const T=track[hand];
+    if(vis<0.4){ T.hist=[]; continue; }
+    const p={x:(w.x-midX)/sw2, y:(w.y-shY)/sw2, z:wl[wi].z/swW}; // 肩幅単位。x:画像右が+, y:下が+, z:カメラに近いほど−
+    T.s=smooth(T.s,p); T.hist.push({t:nowMs,...T.s});
+    while(T.hist.length&&nowMs-T.hist[0].t>WIN_MS+60) T.hist.shift();
+    if(nowMs<T.cool||T.hist.length<3) continue;
+    const old=T.hist.find(h=>nowMs-h.t<=WIN_MS)||T.hist[0], dt=(nowMs-old.t)/1000;
+    if(dt<0.06) continue;
+    const dx=T.s.x-old.x, dy=T.s.y-old.y, dz=(T.s.z-old.z)*1.6; // zは小さく出がちなので重み付け
+    const mag=Math.hypot(dx,dy,dz), speed=mag/dt;
+    const k=SENS[cfg.sens];
+    if(speed<5.0*k||mag<0.55*k) continue;
+    const inward=Math.abs(T.s.x)<Math.abs(old.x)-0.25;      // 体の中心へ向かう横移動
+    const lat=Math.abs(dx), up=Math.max(0,-dy), fwd=Math.max(0,-dz);
+    let kind=null;
+    if(lat>=0.62*mag && inward && T.s.y<0.9) kind="hook";
+    else if(up>=0.62*mag && T.s.y<0.6) kind="upper";
+    else if(fwd>=0.45*mag || (lat<0.5*mag && up<0.62*mag && dy<=0.15)) kind="straight";
+    if(!kind) continue;
+    T.cool=nowMs+COOLDOWN; T.hist=[];
+    onPunch(hand,kind,nowMs/1000,{lat,up,fwd,speed});
+  }
+}
+function drawSkeleton(){
+  const c=$("#skel"), x=c.getContext("2d"); x.clearRect(0,0,c.width,c.height);
+  if(cfg.skel!=="on"||!lastPose||video.hidden) return;
+  // video は object-fit:cover + 鏡像。座標を画面に合わせて変換
+  const vw=video.videoWidth||1, vh=video.videoHeight||1, cw=c.width, ch=c.height;
+  const sc=Math.max(cw/vw,ch/vh), ox=(cw-vw*sc)/2, oy=(ch-vh*sc)/2;
+  const P=i=>[cw-(lastPose[i].x*vw*sc+ox), lastPose[i].y*vh*sc+oy];
+  x.lineWidth=5*devicePixelRatio; x.lineCap="round";
+  for(const [a,b,col] of [[11,12,"#fff"],[11,13,"#E5384F"],[13,15,"#E5384F"],[12,14,"#3B8BEB"],[14,16,"#3B8BEB"]]){
+    x.strokeStyle=col; x.beginPath(); x.moveTo(...P(a)); x.lineTo(...P(b)); x.stroke();
+  }
+  for(const i of [15,16]){ x.fillStyle="#FFC93C"; x.beginPath(); x.arc(...P(i),9*devicePixelRatio,0,7); x.fill(); }
+}
+
+/* =====================================================================
+   ゲーム進行
+   ===================================================================== */
+let G=null, mode="cam", raf=0, wake=null;
+const now=()=>performance.now()/1000;
+
+function newStats(){ const o={}; for(const id of [1,2,3,4,5,6]) o[id]={hit:0,wrong:0,miss:0}; return o; }
+function schedule(){
+  // 次のコンボのミットを予約（到達時刻ベース）
+  const L=LEVEL[cfg.level], list=COMBOS[cfg.prog];
+  let c=list[Math.floor(Math.random()*list.length)]; if(c===G.lastCombo&&list.length>1) c=list[(list.indexOf(c)+1)%list.length];
+  G.lastCombo=c;
+  const ids=c.split("-").map(Number);
+  ids.forEach((id,i)=>{ const arrive=G.nextArrive+i*L.step; G.queue.push({id,arrive,spawn:arrive-L.approach,obj:null,state:"wait",spoken:i===0?ids:null}); });
+  G.nextArrive+=(ids.length-1)*L.step+L.gap+L.step;
+}
+function startGame(){
+  const L=LEVEL[cfg.level];
+  G={t0:now()+3.2,end:0,score:0,combo:0,maxCombo:0,perfect:0,hits:0,total:0,stats:newStats(),queue:[],nextArrive:0,lastCombo:""};
+  G.end=G.t0+Number(cfg.dur); G.nextArrive=G.t0+L.approach;
+  for(let i=0;i<4;i++) schedule();
+  $("#hScore").textContent="0"; $("#hCombo").textContent=""; setFb("","");
+  $("#hud").hidden=false; $("#menu").hidden=true; $("#result").hidden=true;
+  $("#pad").hidden = mode!=="tap";
+  G.countStart=now();
+  cancelAnimationFrame(raf); raf=requestAnimationFrame(loop);
+}
+let fbTimer=0;
+function setFb(main,sub,color="#fff"){
+  const f=$("#fb"),s=$("#fbSub"); f.textContent=main; f.style.color=color; s.textContent=sub;
+  f.classList.remove("pop"); void f.offsetWidth; if(main) f.classList.add("pop");
+  clearTimeout(fbTimer); if(main) fbTimer=setTimeout(()=>{f.textContent="";s.textContent="";},900);
+}
+function onPunch(hand,kind,tSec,vals){
+  const id=idFrom(hand,kind);
+  $("#hDet").textContent=id?`${id} ${nameOf(id)}`:"—";
+  if(!G||now()<G.t0) return;
+  const L=LEVEL[cfg.level], t=now();
+  // まだ判定していないミットのうち、到達時刻に最も近いもの（早打ちは少し広めに許容）
+  let best=null,bd=1e9;
+  for(const m of G.queue){ if(m.state!=="fly") continue; const d=t-m.arrive;
+    if(d>=-L.win*1.4 && d<=L.win && Math.abs(d)<bd){bd=Math.abs(d);best=m;} }
+  if(!best) return; // ミットが来ていない時のパンチはシャドー扱い（減点なし）
+  // 同じ手で打つべきミットが他にあれば、そちらを優先
+  if(id!==best.id){
+    const alt=G.queue.find(m=>m.state==="fly"&&m.id===id&&Math.abs(t-m.arrive)<=L.win);
+    if(alt) best=alt;
+  }
+  G.total++;
+  if(best.id===id){
+    const perfect=Math.abs(t-best.arrive)<0.14;
+    best.state="hit"; G.hits++; G.combo++; G.maxCombo=Math.max(G.maxCombo,G.combo); if(perfect)G.perfect++;
+    G.stats[best.id].hit++;
+    const pts=Math.round((perfect?150:100)*L.mult*(1+Math.min(G.combo,20)*0.05));
+    G.score+=pts; $("#hScore").textContent=G.score; $("#hCombo").textContent=G.combo>=3?`${G.combo} COMBO`:"";
+    burst(best.obj.position.clone(),COL[handOf(best.id)],perfect); removeMitt(best);
+    sndHit(perfect); setFb(perfect?"PERFECT":"GOOD","",perfect?"#FFC93C":"#fff");
+  }else{
+    best.state="wrong"; G.combo=0; G.stats[best.id].wrong++; $("#hCombo").textContent="";
+    sndMiss(); setFb("ちがう！",`いまのは「${nameOf(id)}」→ 正解は「${nameOf(best.id)}」`,"#FF8A8A");
+  }
+}
+function removeMitt(m){ if(m.obj){ scene.remove(m.obj); m.obj.traverse(o=>{o.geometry?.dispose();o.material?.map?.dispose();o.material?.dispose();}); m.obj=null; } }
+
+function loop(){
+  raf=requestAnimationFrame(loop);
+  const t=now();
+  // 姿勢推定（新しいフレームが来た時だけ）
+  if(mode==="cam"&&landmarker&&video.readyState>=2&&video.currentTime!==lastVideoTime){
+    lastVideoTime=video.currentTime;
+    try{ analyzePose(landmarker.detectForVideo(video,performance.now()),performance.now()); }catch(e){ console.warn(e); }
+  }
+  drawSkeleton();
+  if(!G){ renderer.render(scene,cam); return; }
+
+  // カウントダウン（カメラ時は上半身が映っているか確認）
+  const st=$("#status");
+  if(t<G.t0){
+    const visible = mode==="tap" || (lastPose && [11,12,15,16].every(i=>(lastPose[i].visibility??1)>0.5));
+    if(!visible){ G.t0=t+3.2; G.end=G.t0+Number(cfg.dur); shiftQueue(); st.hidden=false; st.innerHTML="両肩と両手が映るように<br>カメラから離れてください"; }
+    else { st.hidden=false; const n=Math.ceil(G.t0-t); st.innerHTML=`<span class="big num">${n}</span>構えて！`; if(n!==G.lastN){G.lastN=n;} }
+  }else if(!G.started){ G.started=true; st.hidden=true; bell(1); }
+
+  const L=LEVEL[cfg.level];
+  // ミットの生成・移動
+  for(const m of G.queue){
+    if(m.state==="wait" && t>=m.spawn && m.arrive<G.end){
+      m.obj=makeMitt(m.id); m.obj.scale.setScalar(mittScale()); m.target=targetPos(m.id); scene.add(m.obj); m.state="fly";
+      if(m.spoken) speak(m.spoken.map(nameOf).join("、"));
+    }
+    if(m.state==="fly"||m.state==="wrong"){
+      const r=(m.arrive-t)/L.approach; // 1→0 で到達
+      const z=HIT_Z+(SPAWN_Z-HIT_Z)*Math.max(r,0)+(r<0?-r*L.approach*6:0); // 到達後は手前へ抜ける
+      const startX=m.target.x*0.15, startY=m.target.y*0.2+0.6;
+      const k=Math.min(1,1-r);
+      m.obj.position.set(startX+(m.target.x-startX)*k, startY+(m.target.y-startY)*k, z);
+      if(m.state==="wrong") m.obj.traverse(o=>{if(o.material)o.material.opacity=0.35;});
+      if(t-m.arrive>L.win || z>-0.4){
+        if(m.state==="fly"){ G.stats[m.id].miss++; G.combo=0; $("#hCombo").textContent=""; setFb("MISS",`${nameOf(m.id)} を見逃し`,"#98A1B3"); }
+        m.state="gone"; removeMitt(m);
+      }
+    }
+  }
+  G.queue=G.queue.filter(m=>m.state!=="gone"&&m.state!=="hit");
+  while(G.nextArrive<G.end+2 && G.queue.length<8) schedule();
+
+  // 破片
+  for(const s of sparks){ s.life-=1/60;
+    if(s.ring){ s.m.scale.multiplyScalar(1.08); s.m.material.opacity=Math.max(0,s.life/0.4); }
+    else { s.m.position.addScaledVector(s.v,1/60); s.v.y-=0.15; s.m.material.opacity=Math.max(0,s.life/0.6); }
+    if(s.life<=0){ scene.remove(s.m); s.m.geometry.dispose(); s.m.material.dispose(); } }
+  for(let i=sparks.length-1;i>=0;i--) if(sparks[i].life<=0) sparks.splice(i,1);
+
+  // 残り時間
+  const left=Math.max(0,G.end-Math.max(t,G.t0));
+  const ls=Math.ceil(left); $("#hTime").textContent=`${Math.floor(ls/60)}:${String(ls%60).padStart(2,"0")}`;
+  if(t>=G.end && G.started && !G.queue.some(m=>m.state==="fly")) finish();
+  renderer.render(scene,cam);
+}
+function shiftQueue(){ // 人が映るまで待つ間、予約したミットを後ろにずらす
+  const L=LEVEL[cfg.level]; let base=G.t0+L.approach; const q=G.queue; if(!q.length)return;
+  const off=base-q[0].arrive; if(off<=0) return;
+  q.forEach(m=>{m.arrive+=off;m.spawn+=off;}); G.nextArrive+=off;
+}
+function finish(){
+  bell(3);
+  const g=G; G=null; cancelAnimationFrame(raf);
+  for(const m of g.queue) removeMitt(m);
+  try{speechSynthesis.cancel();}catch(e){}
+  $("#hud").hidden=true; $("#pad").hidden=true; $("#status").hidden=true; setFb("","");
+  // 集計
+  const all=Object.values(g.stats).reduce((a,s)=>({hit:a.hit+s.hit,wrong:a.wrong+s.wrong,miss:a.miss+s.miss}),{hit:0,wrong:0,miss:0});
+  const n=all.hit+all.wrong+all.miss, acc=n?Math.round(all.hit/n*100):0;
+  $("#rScore").textContent=g.score; $("#rAcc").textContent=acc+"%"; $("#rMax").textContent=g.maxCombo; $("#rPerf").textContent=g.perfect;
+  const best=loadBest(), prev=best[cfg.level]||0;
+  if(g.score>prev){ best[cfg.level]=g.score; try{localStorage.setItem("arm_best",JSON.stringify(best));}catch(e){} }
+  $("#rBest").textContent=g.score>prev&&prev>0?`ベスト更新！（前回ベスト ${prev}）`:`${OPT.level.label[cfg.level]}のベスト：${Math.max(prev,g.score)}`;
+  const rows=Object.entries(g.stats).filter(([,s])=>s.hit+s.wrong+s.miss>0);
+  $("#rTable").innerHTML=rows.map(([id,s])=>{const tot=s.hit+s.wrong+s.miss, p=Math.round(s.hit/tot*100);
+    return `<tr><td><b class="num" style="color:${handOf(+id)==="L"?"var(--left)":"var(--right)"}">${id}</b> ${nameOf(+id)}</td><td><div class="bar"><i style="width:${p}%"></i></div></td><td class="n">${s.wrong}</td><td class="n">${s.miss}</td></tr>`}).join("")||`<tr><td colspan="4" style="color:var(--muted)">ミットが来る前に終了しました</td></tr>`;
+  // ひとことアドバイス：一番ミスが多いパンチ
+  let worst=null,wv=0; for(const [id,s] of rows){const v=s.wrong+s.miss; if(v>wv){wv=v;worst=+id;}}
+  const tip={straight:"ストレート系は、カメラに向かってまっすぐ・速く突き出し、すぐ戻すと判定されやすくなります。",
+             hook:"フックは肘を肩の高さまで上げ、体の外側から内側へ大きく振ると判定されやすくなります。",
+             upper:"アッパーは膝を少し沈めて、あごの下から顔の高さまで突き上げると判定されやすくなります。"};
+  $("#rAdvice").textContent=worst?`苦手：${nameOf(worst)}。${tip[PUNCH[worst].kind]}判定が厳しすぎると感じたら、メニューで「判定の感度」を上げてください。`:"";
+  if(mode==="cam"){ /* カメラは次のプレイ用に維持 */ }
+  $("#result").hidden=false;
+  try{wake?.release();}catch(e){}
+  renderer.render(scene,cam);
+}
+
+/* =====================================================================
+   起動
+   ===================================================================== */
+async function begin(m){
+  mode=m; audio(); $("#err").hidden=true;
+  try{ wake=await navigator.wakeLock?.request("screen"); }catch(e){}
+  if(m==="cam"){
+    const st=$("#status");
+    try{
+      $("#menu").hidden=true; st.hidden=false;
+      if(!video.srcObject){ st.textContent="カメラを起動中…"; await initCamera(); }
+      if(!landmarker){ await initPose(msg=>st.textContent=msg); }
+    }catch(e){
+      console.error(e); st.hidden=true; $("#menu").hidden=false; stopCamera();
+      const msg = e.message==="NO_API"||!isSecureContext ? "このページはHTTPSで開く必要があります（カメラの安全上の制約）。GitHub Pages などに置いて https:// のURLで開いてください。"
+        : e.name==="NotAllowedError" ? "カメラの使用が許可されていません。ブラウザの設定でこのサイトのカメラを「許可」にしてから、もう一度お試しください。"
+        : e.name==="NotFoundError" ? "カメラが見つかりません。「カメラなしで試す」で動作を確認できます。"
+        : "AIモデルの読み込みに失敗しました。インターネット接続を確認して、もう一度お試しください。（"+(e.message||e)+"）";
+      $("#err").textContent=msg; $("#err").hidden=false; return;
+    }
+  }
+  startGame();
+}
+$("#startCam").addEventListener("click",()=>begin("cam"));
+$("#startTap").addEventListener("click",()=>begin("tap"));
+$("#stopBtn").addEventListener("click",()=>{ if(G) finish(); });
+$("#again").addEventListener("click",()=>begin(mode));
+$("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); });
+
+// タップ／キーボード入力（カメラなしモード・PCでの動作確認用）
+$("#pad").innerHTML=[1,2,3,4,5,6].map(id=>`<button data-id="${id}"></button>`).join("");
+function renderPad(){ document.querySelectorAll("#pad button").forEach(b=>{const id=+b.dataset.id; b.className=handOf(id); b.innerHTML=`${id}<span>${nameOf(id)}</span>`;}); }
+$("#pad").addEventListener("pointerdown",e=>{const b=e.target.closest("button"); if(!b)return; e.preventDefault(); const id=+b.dataset.id; onPunch(handOf(id),PUNCH[id].kind,now());});
+addEventListener("keydown",e=>{ const id=Number(e.key); if(G&&id>=1&&id<=6) onPunch(handOf(id),PUNCH[id].kind,now()); });
+
+renderMenu(); renderPad();
+document.addEventListener("click",e=>{ if(e.target.closest(".seg button")) renderPad(); });
+raf=requestAnimationFrame(loop);
+</script>
+</body>
+</html>
