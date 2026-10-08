@@ -59,7 +59,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid 
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:9px;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}
-.row .k{font-weight:500;font-size:15px}
+.row .k{font-weight:500;font-size:15px;white-space:nowrap}
 .seg{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 .seg button{border:1px solid var(--line);background:transparent;border-radius:99px;padding:6px 12px;font-size:13px}
 .seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700}
@@ -95,10 +95,25 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid 
 #pad button{border:0;border-radius:10px;padding:10px 0 8px;font-family:var(--f-display);font-weight:800;font-size:24px;line-height:1;color:#fff;display:flex;flex-direction:column;align-items:center;gap:2px}
 #pad button span{font-family:var(--f-body);font-size:10px;font-weight:500}
 #pad .L{background:var(--left)} #pad .R{background:var(--right)}
+#pad .D{background:#8A6A12;grid-column:span 3}
+#pad.two{grid-template-columns:repeat(12,1fr)} #pad.two .L,#pad.two .R{grid-column:span 2}
+#pad.one-def{grid-template-columns:repeat(4,1fr)} #pad.one-def .D{grid-column:auto}
+/* 被弾したときの赤いフラッシュと画面の揺れ */
+#dmg{position:fixed;inset:0;z-index:9;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(229,56,79,0) 35%,rgba(229,56,79,.75) 100%)}
+#dmg.on{animation:dmg .45s ease-out}
+@keyframes dmg{0%{opacity:1}100%{opacity:0}}
+body.shake #three,body.shake #video{animation:shake .3s linear}
+@keyframes shake{0%,100%{transform:translate(0,0)}20%{transform:translate(-14px,6px)}40%{transform:translate(12px,-8px)}60%{transform:translate(-8px,4px)}80%{transform:translate(6px,-3px)}}
+body.shake #video{animation-name:shakev}
+@keyframes shakev{0%,100%{transform:scaleX(-1)}20%{transform:scaleX(-1) translate(14px,6px)}40%{transform:scaleX(-1) translate(-12px,-8px)}60%{transform:scaleX(-1) translate(8px,4px)}}
+.legend.def{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.legend.def div{text-align:left;padding:8px 10px}
+.legend.def b{font-size:15px;font-family:var(--f-body);color:var(--gold);margin-bottom:2px}
+.sec{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted);margin:2px 0 -6px}
 
 /* result */
 .res-score{font-family:var(--f-display);font-weight:800;font-size:84px;line-height:.9}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;text-align:center}
 .grid3 .v{font-family:var(--f-display);font-weight:800;font-size:28px}
 .grid3 .k{font-size:11px;color:var(--muted)}
 table{width:100%;border-collapse:collapse;font-size:14px}
@@ -120,14 +135,18 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
 <section class="screen" id="menu">
   <div class="wrap">
     <div class="logo">AR<span class="l">MITT</span><span class="r">WORK</span></div>
-    <p class="lead">奥から飛んでくるミットを、書かれたパンチで打ち抜こう。<b style="color:var(--left)">赤＝左手</b>、<b style="color:var(--right)">青＝右手</b>。カメラがあなたの腕の動きを見て、ジャブ・ストレート・フック・アッパーを判定します。</p>
+    <p class="lead" id="lead"></p>
 
+    <div class="sec" id="legendTitle">ミット（打つ）</div>
     <div class="legend" id="legend"></div>
+    <div class="sec" id="dlegendTitle">相手のパンチ（防ぐ）</div>
+    <div class="legend def" id="dlegend"></div>
 
     <div class="panel">
+      <div class="row"><span class="k">モード</span><div class="seg" data-key="mode"></div></div>
       <div class="row"><span class="k">構え</span><div class="seg" data-key="stance"></div></div>
       <div class="row"><span class="k">レベル</span><div class="seg" data-key="level"></div></div>
-      <div class="row"><span class="k">メニュー</span><div class="seg" data-key="prog"></div></div>
+      <div class="row"><span class="k">技の範囲</span><div class="seg" data-key="prog"></div></div>
       <div class="row"><span class="k">時間</span><div class="seg" data-key="dur"></div></div>
       <div class="row"><span class="k">判定の感度</span><div class="seg" data-key="sens"></div></div>
       <div class="row"><span class="k">音声コール</span><div class="seg" data-key="voice"></div></div>
@@ -135,7 +154,7 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
     </div>
 
     <button class="btn" id="startCam">カメラで始める</button>
-    <button class="btn sub" id="startTap">カメラなしで試す（タップ／キー1〜6）</button>
+    <button class="btn sub" id="startTap">カメラなしで試す（タップ操作）</button>
     <div class="err" id="err" hidden></div>
     <div class="best" id="best"></div>
 
@@ -144,6 +163,7 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
         <li>スマホは<b>横向き</b>で胸〜顔の高さに立てかけ、<b>1.5〜2m</b>離れて上半身全体（両肩・両手）が映るように。</li>
         <li>明るい部屋で、背景はなるべくシンプルに。服と背景の色が近いと判定が落ちます。</li>
         <li>ストレートは<b>カメラに向かってまっすぐ</b>、フックは<b>横から内側へ</b>、アッパーは<b>下から上へ</b>。動きを少し大きめにすると判定が安定します。</li>
+        <li><b>ガード</b>：ジャブ・ストレートは両手で顔の前、フックは来る側の手を耳の横、アッパーは両手をあごの前に。頭を動かすスリップ（横）・ダッキング（下）・スウェー（後ろ）でもかわせます。</li>
         <li>周りに物や人がいないか確認してから始めてください。</li>
       </ul>
     </div>
@@ -158,10 +178,11 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
     <div><div class="lab" style="text-align:right">TIME</div><div class="time num" id="hTime">1:00</div></div>
   </div>
   <div class="hudbot">
-    <div id="detect">判定：<b id="hDet">—</b></div>
+    <div id="detect">判定：<b id="hDet">—</b> <span id="hDef" style="color:var(--gold)"></span></div>
     <button id="stopBtn">終了</button>
   </div>
 </div>
+<div id="dmg"></div>
 <div id="fb"></div>
 <div id="fbSub"></div>
 <div id="status" hidden></div>
@@ -174,14 +195,21 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
     <div class="res-score num" id="rScore">0</div>
     <div id="rBest" class="best"></div>
     <div class="panel grid3">
-      <div><div class="v num" id="rAcc">0%</div><div class="k">命中率</div></div>
+      <div id="rAccBox"><div class="v num" id="rAcc">0%</div><div class="k">ミット命中率</div></div>
+      <div id="rDefBox"><div class="v num" id="rDef">0%</div><div class="k">防御成功率</div></div>
       <div><div class="v num" id="rMax">0</div><div class="k">最大コンボ</div></div>
-      <div><div class="v num" id="rPerf">0</div><div class="k">PERFECT</div></div>
+      <div id="rPerfBox"><div class="v num" id="rPerf">0</div><div class="k">PERFECT</div></div>
     </div>
-    <div class="panel">
+    <div class="panel" id="rMittPanel">
       <table>
         <thead><tr><th>パンチ</th><th>命中</th><th style="text-align:right">打ち間違い</th><th style="text-align:right">見逃し</th></tr></thead>
         <tbody id="rTable"></tbody>
+      </table>
+    </div>
+    <div class="panel" id="rDefPanel">
+      <table>
+        <thead><tr><th>相手のパンチ</th><th>防御</th><th style="text-align:right">成功</th><th style="text-align:right">被弾</th></tr></thead>
+        <tbody id="rDTable"></tbody>
       </table>
     </div>
     <p class="lead" id="rAdvice"></p>
@@ -207,6 +235,7 @@ const PUNCH = {
   5:{kind:"upper",lead:true},    6:{kind:"upper",lead:false},
 };
 const OPT = {
+  mode:{label:{mitt:"ミット打ち",guard:"ガード",mix:"ミックス"},def:"mitt"},
   stance:{label:{orth:"オーソドックス",south:"サウスポー"},def:"orth"},
   level:{label:{easy:"初級",mid:"中級",hard:"上級"},def:"easy"},
   prog:{label:{basic:"ジャブ・ストレート",hook:"フック入り",all:"全部"},def:"basic"},
@@ -226,6 +255,29 @@ const COMBOS = {
   all:["1-2","1-2-3","1-2-5-2","3-2","5-2-3","1-6-3-2","2-3-2","1-2-3-4","5-6"],
 };
 const SENS = {low:1.35,mid:1.0,high:0.72}; // 判定しきい値に掛ける係数（小さいほど敏感）
+
+/* 相手のパンチ（ガード練習用）
+   左右は「あなたから見て」どちらから来るか。画面は鏡なので、左から来るパンチは画面の左から入ってくる。
+   ok：成功とみなす防御（ガード系と、頭の動きでかわす系のどちらでもOK） */
+const ATK = {
+  J: {name:"ジャブ",            short:"ジャブ",     ok:["front","slip"], speed:1.0},
+  S: {name:"ストレート",        short:"ストレート", ok:["front","slip"], speed:0.85},
+  HL:{name:"フック（左から）",  short:"フック",     ok:["gL","duck"],    speed:1.0, from:"左から"},
+  HR:{name:"フック（右から）",  short:"フック",     ok:["gR","duck"],    speed:1.0, from:"右から"},
+  U: {name:"アッパー（下から）",short:"アッパー",   ok:["chin","back"],  speed:1.0, from:"下から"},
+};
+const DEFN = {front:"正面ガード",slip:"スリップ",gL:"左ガード",gR:"右ガード",duck:"ダッキング",chin:"あごガード",back:"スウェー"};
+const DEF_SHOUT = {front:"ガード！",slip:"スリップ！",gL:"ガード！",gR:"ガード！",duck:"ダッキング！",chin:"ガード！",back:"スウェー！"};
+// 「技の範囲」ごとの相手の攻撃パターン（ガードモード用）
+const ATK_COMBOS = {
+  basic:["J","J-J","J-S","S","J-J-S"],
+  hook:["J-S","HL","HR","J-HL","S-HR","J-S-HL","HL-HR"],
+  all:["J-S","HL","HR","U","J-U","U-HL","J-S-HR","HL-U","S-HL-U"],
+};
+// ミックスモードで、コンボの後に返してくる単発パンチの候補
+const ATK_SINGLE = {basic:["J","S"],hook:["J","S","HL","HR"],all:["J","S","HL","HR","U"]};
+const COUNTER_RATE = {easy:0.5,mid:0.65,hard:0.8};   // ミックスで打ち返してくる確率
+const DEF_WIN = {easy:0.7,mid:0.52,hard:0.4};        // 当たる何秒前から防御を受け付けるか
 
 let cfg = {};
 try{ cfg = JSON.parse(localStorage.getItem("arm_cfg")||"{}"); }catch(e){}
@@ -252,13 +304,23 @@ function renderMenu(){
     seg.innerHTML=Object.entries(OPT[k].label).map(([v,l])=>`<button aria-pressed="${String(cfg[k])===v}" data-v="${v}">${l}</button>`).join("");
   });
   $("#legend").innerHTML=[1,2,3,4,5,6].map(id=>`<div class="${handOf(id)}"><b>${id}</b>${nameOf(id)}</div>`).join("");
-  const best=loadBest()[cfg.level];
-  $("#best").textContent=best?`${OPT.level.label[cfg.level]}のベスト：${best} 点`:"";
+  $("#dlegend").innerHTML=[["ジャブ・ストレート","両手で顔の前をガード／スリップ"],["フック（左から）","左手を耳の横へ／ダッキング"],
+    ["フック（右から）","右手を耳の横へ／ダッキング"],["アッパー（下から）","両手をあごの前へ／スウェー"]]
+    .map(([a,d])=>`<div><b>${a}</b>${d}</div>`).join("");
+  const showM=cfg.mode!=="guard", showD=cfg.mode!=="mitt";
+  $("#legend").hidden=$("#legendTitle").hidden=!showM; $("#dlegend").hidden=$("#dlegendTitle").hidden=!showD;
+  $("#lead").innerHTML={
+    mitt:'奥から飛んでくるミットを、書かれたパンチで打ち抜こう。<b style="color:var(--left)">赤＝左手</b>、<b style="color:var(--right)">青＝右手</b>。カメラがあなたの腕の動きを見て、ジャブ・ストレート・フック・アッパーを判定します。',
+    guard:'奥から<b style="color:var(--gold)">相手のパンチ（金色のグローブ）</b>が飛んできます。種類に合ったガードか、頭の動きでかわそう。カメラがあなたの手と頭の位置を見て判定します。',
+    mix:'ミットを打ち終わると、相手が<b style="color:var(--gold)">打ち返して</b>きます。打ったらすぐガードに戻る、実戦の流れを練習します。'}[cfg.mode];
+  const best=loadBest()[bestKey()];
+  $("#best").textContent=best?`${OPT.mode.label[cfg.mode]}・${OPT.level.label[cfg.level]}のベスト：${best} 点`:"";
 }
 document.addEventListener("click",e=>{
   const b=e.target.closest(".seg button"); if(!b) return;
   cfg[b.parentElement.dataset.key]=b.dataset.v; saveCfg(); renderMenu();
 });
+const bestKey=()=>cfg.mode==="mitt"?cfg.level:`${cfg.mode}_${cfg.level}`; // ミット打ちは以前の記録をそのまま引き継ぐ
 function loadBest(){try{return JSON.parse(localStorage.getItem("arm_best")||"{}");}catch(e){return {};}}
 
 /* =====================================================================
@@ -281,6 +343,14 @@ function bell(n=1){ const c=audio(); if(!c)return; for(let i=0;i<n;i++){const t=
   [523,1046,1568].forEach((f,j)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;
   g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.3/(j+1),t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+1.2);
   o.connect(g).connect(c.destination);o.start(t);o.stop(t+1.3);});}}
+function sndBlock(){ const c=audio(); if(!c)return; const t=c.currentTime;
+  const len=0.08, buf=c.createBuffer(1,c.sampleRate*len,c.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,4);
+  const n=c.createBufferSource(); n.buffer=buf; const f=c.createBiquadFilter(); f.type="bandpass"; f.frequency.value=900;
+  const g=c.createGain(); g.gain.value=1.2; n.connect(f).connect(g).connect(c.destination); n.start(t); }
+function sndHurt(){ const c=audio(); if(!c)return; const t=c.currentTime, o=c.createOscillator(), g=c.createGain();
+  o.type="triangle"; o.frequency.setValueAtTime(90,t); o.frequency.exponentialRampToValueAtTime(40,t+0.3);
+  g.gain.setValueAtTime(0.9,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.35); o.connect(g).connect(c.destination); o.start(t); o.stop(t+0.36); }
 let jaVoice=null;
 function pickVoice(){try{jaVoice=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.startsWith("ja"))||null;}catch(e){}}
 if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice;}
@@ -354,6 +424,43 @@ function targetPos(id){
 const MITT_TILT = THREE.MathUtils.degToRad(78); // フック・アッパーのミットを傾ける角度
 function mittScale(){ return Math.max(0.35,Math.min(0.62,Math.min(halfW,halfH)*0.3)); } // 画面の短い辺に合わせて大きさを決める
 
+/* 相手のグローブ（金色）。拳の面を +z（こちら側）に向けて作り、種類ごとに向きを変える */
+function atkLabelTex(a){
+  const c=document.createElement("canvas"); c.width=440; c.height=150; const x=c.getContext("2d");
+  x.fillStyle="rgba(0,0,0,.6)"; x.beginPath(); x.roundRect?x.roundRect(6,6,428,138,22):x.rect(6,6,428,138); x.fill();
+  x.textAlign="center"; x.textBaseline="middle";
+  // 枠に収まるよう、長い文字は自動で小さくする
+  const fit=(txt,weight,size,y,color)=>{ x.fillStyle=color; let f=size; do{ x.font=`${weight} ${f}px 'Noto Sans JP', sans-serif`; f-=2; }while(x.measureText(txt).width>400&&f>14); x.fillText(txt,220,y); };
+  fit(ATK[a].short+(ATK[a].from?`（${ATK[a].from}）`:""),800,46,52,"#FFC93C");
+  if(cfg.level!=="hard") fit("→ "+ATK[a].ok.map(k=>DEFN[k]).join(" / "),700,32,108,"#fff");
+  return new THREE.CanvasTexture(c);
+}
+function makeGlove(a){
+  const g=new THREE.Group(), fist=new THREE.Group(); g.add(fist);
+  const gold=new THREE.MeshStandardMaterial({color:0xE8B030,roughness:.32,metalness:.1,transparent:true});
+  const ball=new THREE.Mesh(new THREE.SphereGeometry(0.42,32,24),gold); ball.scale.set(1,0.88,1.05); fist.add(ball);
+  const thumb=new THREE.Mesh(new THREE.SphereGeometry(0.16,16,12),gold.clone()); thumb.position.set(0.3,-0.16,0.12); thumb.scale.set(1,1.5,1); fist.add(thumb);
+  const cuff=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.33,0.5,24),new THREE.MeshStandardMaterial({color:0x1d1d22,roughness:.6,transparent:true}));
+  cuff.rotation.x=Math.PI/2; cuff.position.z=-0.55; fist.add(cuff);
+  const band=new THREE.Mesh(new THREE.TorusGeometry(0.33,0.04,8,30),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true}));
+  band.position.z=-0.32; fist.add(band);
+  if(a==="HL") fist.rotation.y= 0.9;   // 左から来るフック：拳を内側（右）へ向ける
+  if(a==="HR") fist.rotation.y=-0.9;
+  if(a==="U")  fist.rotation.x=-0.8;   // アッパー：拳を上へ
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:atkLabelTex(a),transparent:true,depthTest:false}));
+  sp.scale.set(2.2,0.75,1); sp.position.set(0,0.95,0); g.add(sp);
+  return g;
+}
+const GLOVE_END_Z=-1.25, GLOVE_START_Z=-26;
+// k=0（遠く）→1（顔の前）の位置。フックは外側に弧を描いて横から、アッパーは下から入ってくる
+function glovePos(a,k){
+  const z=GLOVE_START_Z+(GLOVE_END_Z-GLOVE_START_Z)*k, arc=Math.sin(Math.PI*k)*(1-0.3*k);
+  if(a==="HL") return new THREE.Vector3(-0.3-2.4*arc, 0.05+0.3*arc, z);
+  if(a==="HR") return new THREE.Vector3( 0.3+2.4*arc, 0.05+0.3*arc, z);
+  if(a==="U")  return new THREE.Vector3(0.05, -0.38-1.8*arc, z);
+  return new THREE.Vector3(0, 0.02+0.25*(1-k), z);
+}
+
 // 命中時の破片
 const sparks=[];
 function burst(pos,color,perfect){
@@ -403,12 +510,13 @@ let lastDetect={text:"—",vals:""};
 function smooth(prev,cur,a=0.55){ return prev?{x:prev.x+(cur.x-prev.x)*a,y:prev.y+(cur.y-prev.y)*a,z:prev.z+(cur.z-prev.z)*a}:cur; }
 function analyzePose(res,nowMs){
   const lm=res.landmarks?.[0], wl=res.worldLandmarks?.[0];
-  if(!lm||!wl){ lastPose=null; return; }
+  if(!lm||!wl){ lastPose=null; defState={}; return; }
   lastPose=lm;
-  // MediaPipeの「左」＝本人の左。11/12肩 13/14肘 15/16手首
+  // MediaPipeの「左」＝本人の左。0鼻 11/12肩 13/14肘 15/16手首
   const sw2=Math.hypot(lm[11].x-lm[12].x,lm[11].y-lm[12].y)||0.2;    // 画像上の肩幅
   const swW=Math.hypot(wl[11].x-wl[12].x,wl[11].y-wl[12].y,wl[11].z-wl[12].z)||0.35; // 3Dの肩幅(m)
   const midX=(lm[11].x+lm[12].x)/2, shY=(lm[11].y+lm[12].y)/2;
+  if(cfg.mode!=="mitt") computeDefense(lm,sw2,shY);
   for(const [hand,wi,si] of [["L",15,11],["R",16,12]]){
     const w=lm[wi], vis=(w.visibility??1);
     const T=track[hand];
@@ -434,6 +542,37 @@ function analyzePose(res,nowMs){
     onPunch(hand,kind,nowMs/1000,{lat,up,fwd,speed});
   }
 }
+/*
+  防御の判定（なぜこうしたか）
+  ・ガードは「手首が顔に対してどこにあるか」で見る（鼻を基準、肩幅を1とした単位）。
+      正面ガード：両手が顔の前（鼻の高さ付近）／左右ガード：その側の手が耳の横／あごガード：両手があごの前
+  ・頭の動きは「数秒間の平均位置（基準）」からのずれで見る。攻撃が来ていない間だけ基準を少しずつ更新するので、
+    立ち位置が多少ずれても追従する。
+      スリップ：頭が横へ／ダッキング：頭が下へ／スウェー：体が後ろへ（肩幅が小さく映る）
+  ・MediaPipeの画像は鏡像ではないため、本人の左手は画像の右側（xが大きい側）に映る点に注意。
+*/
+let defState={}, headBase=null, tapDef={k:"",until:0};
+function computeDefense(lm,sw,shY){
+  const n=lm[0];
+  if((n.visibility??1)<0.5){ defState={}; return; }
+  const rel=w=>({dx:(w.x-n.x)/sw, dy:(w.y-n.y)/sw, ok:(w.visibility??1)>0.4});
+  const L=rel(lm[15]), R=rel(lm[16]), k=SENS[cfg.sens], neck=(shY-n.y)/sw;
+  const s={};
+  s.front = L.ok&&R.ok && Math.abs(L.dx)<0.6 && Math.abs(R.dx)<0.6 && L.dy<0.25 && R.dy<0.25 && L.dy>-1 && R.dy>-1;
+  s.gL = L.ok && L.dx>0.25 && L.dx<1.3 && L.dy<0.35 && L.dy>-1;
+  s.gR = R.ok && R.dx<-0.25 && R.dx>-1.3 && R.dy<0.35 && R.dy>-1;
+  s.chin = L.ok&&R.ok && Math.abs(L.dx)<0.7 && Math.abs(R.dx)<0.7 && L.dy>=0.2 && R.dy>=0.2 && L.dy<neck+0.45 && R.dy<neck+0.45;
+  if(!headBase) headBase={x:n.x,y:n.y,sw};
+  s.slip = Math.abs(n.x-headBase.x)/headBase.sw > 0.4*k;
+  s.duck = (n.y-headBase.y)/headBase.sw > 0.45*k;
+  s.back = sw < headBase.sw*(1-0.09*k);
+  defState=s;
+  if(!attackSoon()){ const a=0.04; headBase.x+=(n.x-headBase.x)*a; headBase.y+=(n.y-headBase.y)*a; headBase.sw+=(sw-headBase.sw)*a; }
+}
+function attackSoon(){ if(!G) return false; const t=now(); return G.queue.some(m=>m.type==="atk"&&m.state==="fly"&&t>m.arrive-DEF_WIN[cfg.level]-0.3); }
+// 今この瞬間に成り立っている防御（カメラ判定 or タップ）
+function activeDef(a){ const t=now(); return ATK[a].ok.find(k=>defState[k] || (tapDef.k===k && t<tapDef.until)) || null; }
+
 function drawSkeleton(){
   const c=$("#skel"), x=c.getContext("2d"); x.clearRect(0,0,c.width,c.height);
   if(cfg.skel!=="on"||!lastPose||video.hidden) return;
@@ -455,23 +594,39 @@ let G=null, mode="cam", raf=0, wake=null;
 const now=()=>performance.now()/1000;
 
 function newStats(){ const o={}; for(const id of [1,2,3,4,5,6]) o[id]={hit:0,wrong:0,miss:0}; return o; }
+function newDStats(){ const o={}; for(const a in ATK) o[a]={ok:0,hit:0}; return o; }
+function pickFrom(list){ let c=list[Math.floor(Math.random()*list.length)]; if(c===G.lastCombo&&list.length>1) c=list[(list.indexOf(c)+1)%list.length]; G.lastCombo=c; return c; }
+// ミットを予約し、最後のミットの到達時刻を返す
+function pushMitts(ids,start){ const L=LEVEL[cfg.level];
+  ids.forEach((id,i)=>{ const arrive=start+i*L.step; G.queue.push({type:"mitt",id,arrive,spawn:arrive-L.approach,obj:null,state:"wait",spoken:i===0?ids:null}); });
+  return start+(ids.length-1)*L.step; }
+// 相手のパンチを予約（構え直す時間が要るので、ミットより間隔を長めに取る）
+function pushAtks(aids,start){ const L=LEVEL[cfg.level], st=L.step*1.6;
+  aids.forEach((a,i)=>{ const arrive=start+i*st, ap=L.approach*ATK[a].speed; G.queue.push({type:"atk",id:a,arrive,ap,spawn:arrive-ap,obj:null,state:"wait",spoken:i===0?aids:null}); });
+  return start+(aids.length-1)*st; }
 function schedule(){
-  // 次のコンボのミットを予約（到達時刻ベース）
-  const L=LEVEL[cfg.level], list=COMBOS[cfg.prog];
-  let c=list[Math.floor(Math.random()*list.length)]; if(c===G.lastCombo&&list.length>1) c=list[(list.indexOf(c)+1)%list.length];
-  G.lastCombo=c;
-  const ids=c.split("-").map(Number);
-  ids.forEach((id,i)=>{ const arrive=G.nextArrive+i*L.step; G.queue.push({id,arrive,spawn:arrive-L.approach,obj:null,state:"wait",spoken:i===0?ids:null}); });
-  G.nextArrive+=(ids.length-1)*L.step+L.gap+L.step;
+  const L=LEVEL[cfg.level];
+  if(cfg.mode==="guard"){
+    const last=pushAtks(pickFrom(ATK_COMBOS[cfg.prog]).split("-"),G.nextArrive);
+    G.nextArrive=last+L.gap+L.step*1.6; return;
+  }
+  let last=pushMitts(pickFrom(COMBOS[cfg.prog]).split("-").map(Number),G.nextArrive);
+  if(cfg.mode==="mix" && Math.random()<COUNTER_RATE[cfg.level]){
+    const pool=ATK_SINGLE[cfg.prog], n=(cfg.level==="hard"&&Math.random()<0.4)?2:1;
+    const aids=[...Array(n)].map(()=>pool[Math.floor(Math.random()*pool.length)]);
+    last=pushAtks(aids,last+L.step*1.5);
+  }
+  G.nextArrive=last+L.gap+L.step;
 }
 function startGame(){
   const L=LEVEL[cfg.level];
-  G={t0:now()+3.2,end:0,score:0,combo:0,maxCombo:0,perfect:0,hits:0,total:0,stats:newStats(),queue:[],nextArrive:0,lastCombo:""};
+  G={t0:now()+3.2,end:0,score:0,combo:0,maxCombo:0,perfect:0,hits:0,total:0,stats:newStats(),dstats:newDStats(),queue:[],nextArrive:0,lastCombo:"",lastT:now()};
+  headBase=null; tapDef={k:"",until:0};
   G.end=G.t0+Number(cfg.dur); G.nextArrive=G.t0+L.approach;
   for(let i=0;i<4;i++) schedule();
   $("#hScore").textContent="0"; $("#hCombo").textContent=""; setFb("","");
   $("#hud").hidden=false; $("#menu").hidden=true; $("#result").hidden=true;
-  $("#pad").hidden = mode!=="tap";
+  $("#pad").hidden = mode!=="tap"; renderPad();
   G.countStart=now();
   cancelAnimationFrame(raf); raf=requestAnimationFrame(loop);
 }
@@ -488,12 +643,12 @@ function onPunch(hand,kind,tSec,vals){
   const L=LEVEL[cfg.level], t=now();
   // まだ判定していないミットのうち、到達時刻に最も近いもの（早打ちは少し広めに許容）
   let best=null,bd=1e9;
-  for(const m of G.queue){ if(m.state!=="fly") continue; const d=t-m.arrive;
+  for(const m of G.queue){ if(m.type!=="mitt"||m.state!=="fly") continue; const d=t-m.arrive;
     if(d>=-L.win*1.4 && d<=L.win && Math.abs(d)<bd){bd=Math.abs(d);best=m;} }
   if(!best) return; // ミットが来ていない時のパンチはシャドー扱い（減点なし）
   // 同じ手で打つべきミットが他にあれば、そちらを優先
   if(id!==best.id){
-    const alt=G.queue.find(m=>m.state==="fly"&&m.id===id&&Math.abs(t-m.arrive)<=L.win);
+    const alt=G.queue.find(m=>m.type==="mitt"&&m.state==="fly"&&m.id===id&&Math.abs(t-m.arrive)<=L.win);
     if(alt) best=alt;
   }
   G.total++;
@@ -526,14 +681,16 @@ function loop(){
   // カウントダウン（カメラ時は上半身が映っているか確認）
   const st=$("#status");
   if(t<G.t0){
-    const visible = mode==="tap" || (lastPose && [11,12,15,16].every(i=>(lastPose[i].visibility??1)>0.5));
+    const need = cfg.mode==="mitt"?[11,12,15,16]:[0,11,12,15,16]; // ガードでは頭（鼻）も必要
+    const visible = mode==="tap" || (lastPose && need.every(i=>(lastPose[i].visibility??1)>0.5));
     if(!visible){ G.t0=t+3.2; G.end=G.t0+Number(cfg.dur); shiftQueue(); st.hidden=false; st.innerHTML="両肩と両手が映るように<br>カメラから離れてください"; }
     else { st.hidden=false; const n=Math.ceil(G.t0-t); st.innerHTML=`<span class="big num">${n}</span>構えて！`; if(n!==G.lastN){G.lastN=n;} }
   }else if(!G.started){ G.started=true; st.hidden=true; bell(1); }
 
-  const L=LEVEL[cfg.level];
-  // ミットの生成・移動
+  const L=LEVEL[cfg.level], dt=Math.min(0.05,t-G.lastT); G.lastT=t;
+  // ミット・相手パンチの生成・移動
   for(const m of G.queue){
+    if(m.type==="atk"){ updateAttack(m,t,dt); continue; }
     if(m.state==="wait" && t>=m.spawn && m.arrive<G.end){
       m.obj=makeMitt(m.id); m.obj.scale.setScalar(mittScale()); m.target=targetPos(m.id); scene.add(m.obj); m.state="fly";
       if(m.spoken) speak(m.spoken.map(nameOf).join("、"));
@@ -552,6 +709,7 @@ function loop(){
     }
   }
   G.queue=G.queue.filter(m=>m.state!=="gone"&&m.state!=="hit");
+  if(cfg.mode!=="mitt"){ const on=Object.keys(DEFN).filter(k=>defState[k]||(tapDef.k===k&&t<tapDef.until)); $("#hDef").textContent=on.length?"／ "+on.map(k=>DEFN[k]).join("・"):""; }
   while(G.nextArrive<G.end+2 && G.queue.length<8) schedule();
 
   // 破片
@@ -567,6 +725,43 @@ function loop(){
   if(t>=G.end && G.started && !G.queue.some(m=>m.state==="fly")) finish();
   renderer.render(scene,cam);
 }
+function updateAttack(m,t,dt){
+  const W=DEF_WIN[cfg.level];
+  if(m.state==="wait" && t>=m.spawn && m.arrive<G.end){
+    m.obj=makeGlove(m.id); m.obj.scale.setScalar(0.55); scene.add(m.obj); m.state="fly";
+    if(m.spoken && cfg.mode==="guard" && cfg.level==="easy") speak(m.spoken.map(a=>ATK[a].short).join("、"));
+  }
+  if(m.state==="fly"){
+    const k=Math.max(0,Math.min(1,1-(m.arrive-t)/m.ap));
+    m.obj.position.copy(glovePos(m.id,k));
+    const d=(t>=m.arrive-W && t<=m.arrive+0.06) ? activeDef(m.id) : null;
+    if(d){ // 防御成功：グローブを弾き返す
+      m.state="blocked"; m.t1=t; G.combo++; G.maxCombo=Math.max(G.maxCombo,G.combo); G.dstats[m.id].ok++;
+      G.score+=Math.round(100*LEVEL[cfg.level].mult*(1+Math.min(G.combo,20)*0.05)); $("#hScore").textContent=G.score;
+      $("#hCombo").textContent=G.combo>=3?`${G.combo} COMBO`:"";
+      const out=m.id==="HL"?-1:m.id==="HR"?1:(Math.random()<.5?-1:1);
+      m.vel=new THREE.Vector3(out*3, m.id==="U"?-2:2.5, -6);
+      if(d==="slip") m.vel.set(-(defState._dir||out)*0.5,0.2,9); // かわした時は横をすり抜ける
+      if(d==="duck"||d==="back") m.vel.set(m.id==="HL"?6:m.id==="HR"?-6:0, d==="back"?3:0.3, 2);
+      sndBlock(); setFb(DEF_SHOUT[d],DEFN[d],"#7FD1FF");
+    }else if(t>m.arrive+0.06){ // 被弾
+      m.state="landed"; m.t1=t; G.combo=0; G.dstats[m.id].hit++; $("#hCombo").textContent="";
+      hurt(); setFb("被弾",`${ATK[m.id].name} → ${ATK[m.id].ok.map(k=>DEFN[k]).join(" か ")}`,"#FF8A8A");
+    }
+  }else if(m.state==="blocked"||m.state==="landed"){
+    const age=t-m.t1, life=m.state==="blocked"?0.45:0.25;
+    if(m.state==="blocked"){ m.obj.position.addScaledVector(m.vel,dt); m.obj.rotation.z+=dt*6; }
+    else m.obj.position.z+=dt*4;
+    m.obj.traverse(o=>{ if(o.material) o.material.opacity=Math.max(0,1-age/life); });
+    if(age>life){ m.state="gone"; removeMitt(m); }
+  }
+}
+function hurt(){
+  sndHurt(); try{ navigator.vibrate?.(150); }catch(e){}
+  const d=$("#dmg"); d.classList.remove("on"); void d.offsetWidth; d.classList.add("on");
+  document.body.classList.remove("shake"); void document.body.offsetWidth; document.body.classList.add("shake");
+  clearTimeout(hurt._t); hurt._t=setTimeout(()=>document.body.classList.remove("shake"),320);
+}
 function shiftQueue(){ // 人が映るまで待つ間、予約したミットを後ろにずらす
   const L=LEVEL[cfg.level]; let base=G.t0+L.approach; const q=G.queue; if(!q.length)return;
   const off=base-q[0].arrive; if(off<=0) return;
@@ -581,10 +776,17 @@ function finish(){
   // 集計
   const all=Object.values(g.stats).reduce((a,s)=>({hit:a.hit+s.hit,wrong:a.wrong+s.wrong,miss:a.miss+s.miss}),{hit:0,wrong:0,miss:0});
   const n=all.hit+all.wrong+all.miss, acc=n?Math.round(all.hit/n*100):0;
-  $("#rScore").textContent=g.score; $("#rAcc").textContent=acc+"%"; $("#rMax").textContent=g.maxCombo; $("#rPerf").textContent=g.perfect;
-  const best=loadBest(), prev=best[cfg.level]||0;
-  if(g.score>prev){ best[cfg.level]=g.score; try{localStorage.setItem("arm_best",JSON.stringify(best));}catch(e){} }
-  $("#rBest").textContent=g.score>prev&&prev>0?`ベスト更新！（前回ベスト ${prev}）`:`${OPT.level.label[cfg.level]}のベスト：${Math.max(prev,g.score)}`;
+  const dall=Object.values(g.dstats).reduce((a,s)=>({ok:a.ok+s.ok,hit:a.hit+s.hit}),{ok:0,hit:0});
+  const dn=dall.ok+dall.hit, dacc=dn?Math.round(dall.ok/dn*100):0;
+  const showM=cfg.mode!=="guard", showD=cfg.mode!=="mitt";
+  $("#rAccBox").hidden=$("#rPerfBox").hidden=$("#rMittPanel").hidden=!showM; $("#rDefBox").hidden=$("#rDefPanel").hidden=!showD;
+  $("#rScore").textContent=g.score; $("#rAcc").textContent=acc+"%"; $("#rDef").textContent=dacc+"%"; $("#rMax").textContent=g.maxCombo; $("#rPerf").textContent=g.perfect;
+  const best=loadBest(), bk=bestKey(), prev=best[bk]||0;
+  if(g.score>prev){ best[bk]=g.score; try{localStorage.setItem("arm_best",JSON.stringify(best));}catch(e){} }
+  $("#rBest").textContent=g.score>prev&&prev>0?`ベスト更新！（前回ベスト ${prev}）`:`${OPT.mode.label[cfg.mode]}・${OPT.level.label[cfg.level]}のベスト：${Math.max(prev,g.score)}`;
+  const drows=Object.entries(g.dstats).filter(([,s])=>s.ok+s.hit>0);
+  $("#rDTable").innerHTML=drows.map(([a,s])=>{const p=Math.round(s.ok/(s.ok+s.hit)*100);
+    return `<tr><td>${ATK[a].name}</td><td><div class="bar"><i style="width:${p}%"></i></div></td><td class="n">${s.ok}</td><td class="n">${s.hit}</td></tr>`}).join("")||`<tr><td colspan="4" style="color:var(--muted)">相手のパンチが来る前に終了しました</td></tr>`;
   const rows=Object.entries(g.stats).filter(([,s])=>s.hit+s.wrong+s.miss>0);
   $("#rTable").innerHTML=rows.map(([id,s])=>{const tot=s.hit+s.wrong+s.miss, p=Math.round(s.hit/tot*100);
     return `<tr><td><b class="num" style="color:${handOf(+id)==="L"?"var(--left)":"var(--right)"}">${id}</b> ${nameOf(+id)}</td><td><div class="bar"><i style="width:${p}%"></i></div></td><td class="n">${s.wrong}</td><td class="n">${s.miss}</td></tr>`}).join("")||`<tr><td colspan="4" style="color:var(--muted)">ミットが来る前に終了しました</td></tr>`;
@@ -593,7 +795,14 @@ function finish(){
   const tip={straight:"ストレート系は、カメラに向かってまっすぐ・速く突き出し、すぐ戻すと判定されやすくなります。",
              hook:"フックは肘を肩の高さまで上げ、体の外側から内側へ大きく振ると判定されやすくなります。",
              upper:"アッパーは膝を少し沈めて、あごの下から顔の高さまで突き上げると判定されやすくなります。"};
-  $("#rAdvice").textContent=worst?`苦手：${nameOf(worst)}。${tip[PUNCH[worst].kind]}判定が厳しすぎると感じたら、メニューで「判定の感度」を上げてください。`:"";
+  const mAdv=(showM&&worst)?`苦手なパンチ：${nameOf(worst)}。${tip[PUNCH[worst].kind]}`:"";
+  let dw=null,dv=0; for(const [a,s] of drows){ if(s.hit>dv){dv=s.hit;dw=a;} }
+  const dtip={J:"顔の前に両手のグローブをそろえ、鼻の高さで受けます。スリップは頭を肩幅の半分ほど横へずらします。",
+    HL:"左手を左耳の横まで上げ、肘を締めます。ダッキングは膝を曲げて真下へ沈みます。",
+    HR:"右手を右耳の横まで上げ、肘を締めます。ダッキングは膝を曲げて真下へ沈みます。",
+    U:"両手をあごの前（鼻より下）でそろえて受けます。スウェーは上体を後ろへ反らせます。"};
+  const dAdv=(showD&&dw)?`被弾が多いパンチ：${ATK[dw].name}。${dtip[dw]||dtip.J}`:"";
+  $("#rAdvice").textContent=[mAdv,dAdv].filter(Boolean).join(" ")+((mAdv||dAdv)?" 判定が厳しすぎると感じたら、メニューで「判定の感度」を上げてください。":"");
   if(mode==="cam"){ /* カメラは次のプレイ用に維持 */ }
   $("#result").hidden=false;
   try{wake?.release();}catch(e){}
@@ -630,10 +839,22 @@ $("#again").addEventListener("click",()=>begin(mode));
 $("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); });
 
 // タップ／キーボード入力（カメラなしモード・PCでの動作確認用）
-$("#pad").innerHTML=[1,2,3,4,5,6].map(id=>`<button data-id="${id}"></button>`).join("");
-function renderPad(){ document.querySelectorAll("#pad button").forEach(b=>{const id=+b.dataset.id; b.className=handOf(id); b.innerHTML=`${id}<span>${nameOf(id)}</span>`;}); }
-$("#pad").addEventListener("pointerdown",e=>{const b=e.target.closest("button"); if(!b)return; e.preventDefault(); const id=+b.dataset.id; onPunch(handOf(id),PUNCH[id].kind,now());});
-addEventListener("keydown",e=>{ const id=Number(e.key); if(G&&id>=1&&id<=6) onPunch(handOf(id),PUNCH[id].kind,now()); });
+// 防御ボタン（キーボードは Q=正面 A=左 D=右 S=あご）
+const PAD_DEF=[["front","正面ガード","Q"],["gL","左ガード","A"],["gR","右ガード","D"],["chin","あごガード","S"]];
+function renderPad(){
+  const pad=$("#pad"), m=cfg.mode;
+  pad.className = m==="mix"?"two":m==="guard"?"one-def":"";
+  const def=m!=="mitt"?PAD_DEF.map(([k,l,key])=>`<button class="D" data-def="${k}" style="font-size:16px">${l}<span>${key}キー</span></button>`).join(""):"";
+  const pun=m!=="guard"?[1,2,3,4,5,6].map(id=>`<button class="${handOf(id)}" data-id="${id}">${id}<span>${nameOf(id)}</span></button>`).join(""):"";
+  pad.innerHTML=def+pun;
+}
+function tapDefense(k){ tapDef={k,until:now()+0.45}; }
+$("#pad").addEventListener("pointerdown",e=>{const b=e.target.closest("button"); if(!b)return; e.preventDefault();
+  if(b.dataset.def){ tapDefense(b.dataset.def); return; }
+  const id=+b.dataset.id; onPunch(handOf(id),PUNCH[id].kind,now());});
+addEventListener("keydown",e=>{ if(!G) return; const id=Number(e.key);
+  if(id>=1&&id<=6&&cfg.mode!=="guard") onPunch(handOf(id),PUNCH[id].kind,now());
+  const dk={q:"front",a:"gL",d:"gR",s:"chin"}[e.key.toLowerCase()]; if(dk&&cfg.mode!=="mitt") tapDefense(dk); });
 
 renderMenu(); renderPad();
 document.addEventListener("click",e=>{ if(e.target.closest(".seg button")) renderPad(); });
