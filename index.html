@@ -413,13 +413,15 @@ function makeMitt(id){
   return g;
 }
 function targetPos(id){
-  const hand=handOf(id), kind=PUNCH[id].kind, s=hand==="L"?-1:1; // 鏡像表示：左手は画面の左側
+  const hand=handOf(id), kind=PUNCH[id].kind, s=hand==="L"?-1:1; // s：打つ手の側（鏡像表示なので左手は画面の左側）。サウスポーは handOf() で自動的に左右が入れ替わる
   const W=Math.min(halfW,halfH*1.2);
-  if(kind==="straight") return new THREE.Vector3(s*W*0.34, halfH*0.05, HIT_Z);
+  // ストレート系：打つ手と反対側に置く（実際のミット持ちと同じ。オーソドックスならジャブ＝右側、ストレート＝左側）
+  if(kind==="straight") return new THREE.Vector3(-s*W*0.34, halfH*0.05, HIT_Z);
   // フック：顔の正面あたり（拳が横から入ってくる側と反対寄り）に置く → 横向きの面がカメラから見える
   if(kind==="hook")     return new THREE.Vector3(-s*W*0.05, -halfH*0.04, HIT_Z);
   // アッパー：あごの高さ（カメラより少し上）に置く → 下向きの面を下から見上げる形で見える
-  return new THREE.Vector3(s*W*0.16, halfH*0.32, HIT_Z);
+  // 左右は打つ手と反対側（オーソドックスなら左アッパー＝右側、右アッパー＝左側）
+  return new THREE.Vector3(-s*W*0.2, halfH*0.32, HIT_Z);
 }
 const MITT_TILT = THREE.MathUtils.degToRad(78); // フック・アッパーのミットを傾ける角度
 function mittScale(){ return Math.max(0.35,Math.min(0.62,Math.min(halfW,halfH)*0.3)); } // 画面の短い辺に合わせて大きさを決める
