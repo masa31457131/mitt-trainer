@@ -258,7 +258,7 @@ const COMBOS = {
   hook:["1-2","1-2-3","3-2","1-3","2-3-2","1-2-3-2"],
   all:["1-2","1-2-3","1-2-5-2","3-2","5-2-3","1-6-3-2","2-3-2","1-2-3-4","5-6"],
 };
-const SENS = {low:1.35,mid:1.0,high:0.72}; // 判定しきい値に掛ける係数（小さいほど敏感）
+const SENS = {low:1.25,mid:1.0,high:0.82}; // 判定しきい値に掛ける係数（小さいほど敏感）
 
 /* 相手のパンチ（ガード練習用）
    左右は「あなたから見て」どちらから来るか。画面は鏡なので、左から来るパンチは画面の左から入ってくる。
@@ -573,7 +573,7 @@ class OneEuro{
   }
 }
 // [最低カットオフ(Hz), 速さへの追従度]：ノイズを乗せた模擬データで「遅れ200ms以内で揺れ最小」に調整した値
-const SMOOTH={torso:[0.35,0.4], hand:[0.55,2.0]};
+const SMOOTH={torso:[0.35,0.4], hand:[0.4,1.2]};   // 手は少し強めに揺れ止め（パンチ中は技の軌道で動かすので遅れは気にならない）
 const Z_DAMP=0.6;   // 奥行きは推定がぶれやすいので、より強く抑える
 function filt3(store,key,kind,w,t){
   let f=store[key]; if(!f){ const [mc,b]=SMOOTH[kind]; f=store[key]=[new OneEuro(mc,b),new OneEuro(mc,b),new OneEuro(mc*Z_DAMP,b)]; }
@@ -634,7 +634,10 @@ function updateGloves(wl,t){
       const p=new THREE.Vector3(-(h.x-shoulder.x)/sc, -(h.y-shoulder.y)/sc+FP.shoulderY, (h.z-shoulder.z)/sc*FP.zGain+FP.shoulderZ);
       const sp=new THREE.Vector3(ls*0.19,FP.shoulderY,FP.shoulderZ), d=p.clone().sub(sp);   // 腕の長さより遠くへは行かない
       if(d.length()>FP.armLen) p.copy(sp).addScaledVector(d.normalize(),FP.armLen);
-      base={p, q:canonPose(hand).q};
+      // 構えの位置の近く（15cm以内）では、決まった構えの形へ寄せて小さな揺れを吸収する
+      const c=canonPose(hand), dist=p.distanceTo(c.p);
+      if(dist<0.15) p.lerp(c.p,0.6*(1-dist/0.15));
+      base={p, q:c.q};
     }
     // ② ガードを判定しているときは、その形へ寄せる（的確に見えるように）
     let guard=null;
@@ -732,10 +735,44 @@ function stopCamera(){ const s=video.srcObject; if(s) s.getTracks().forEach(t=>t
       横方向に内側へ大きく → フック / 上方向に大きく → アッパー / それ以外で前へ → ストレート
   ・打った後に手を戻す動きを誤判定しないよう、各手に0.32秒のクールダウンと「内側へ」「上へ」「前へ」の条件を付ける。
 */
-const WIN_MS=150, COOLDOWN=320;
-const track={L:{hist:[],cool:0},R:{hist:[],cool:0}};
+/*
+  パンチ判定（人の腕の動き方に基づく）
+  ・位置は肩幅を1とした単位（体格・カメラとの距離の差を吸収）。上下左右は画像上の座標（安定）、前後はAIの3D推定を使う
+  ・「手首が速く動いた」だけではパンチにしない。技ごとに、腕の形（肘の角度・肩から拳までの距離）の条件をそろえる
+      ストレート系：肘が伸びきる（130°以上）＋肩から拳までの距離が伸びる（＝打ち出し。引き戻しは対象外）
+      フック　　　：肘を曲げたまま肩の高さまで上げ、横から体の中心へ振る
+      アッパー　　：肘を曲げた状態で、胸〜あごの高さから上へ突き上げる（下ろした手を上げる動きは対象外）
+  ・同じ手は、一度打ったら引き戻すまで次のパンチを受け付けない（戻す動き・余韻での二重判定を防ぐ）
+  ・動きの前半と後半で向きがそろっていること（推定のぶれによる一瞬の跳びを除外）
+*/
+const WIN_MIN=90, WIN_MAX=230;   // 判定に使う時間幅(ms)
+const track={L:{hist:[],armed:true},R:{hist:[],armed:true}};
 let lastDetect={text:"—",vals:""};
-function smooth(prev,cur,a=0.55){ return prev?{x:prev.x+(cur.x-prev.x)*a,y:prev.y+(cur.y-prev.y)*a,z:prev.z+(cur.z-prev.z)*a}:cur; }
+function smooth(prev,cur,a=0.6){ if(!prev) return cur; const o={}; for(const k in cur) o[k]=prev[k]+(cur[k]-prev[k])*a; return o; }
+const angleDeg=(a,b,c)=>{ const u=[a.x-b.x,a.y-b.y,a.z-b.z], v=[c.x-b.x,c.y-b.y,c.z-b.z];
+  const d=(u[0]*v[0]+u[1]*v[1]+u[2]*v[2])/((Math.hypot(...u)*Math.hypot(...v))||1); return Math.acos(Math.max(-1,Math.min(1,d)))*180/Math.PI; };
+function classifyPunch(T,old,mid,cur,k){
+  const dt=(cur.t-old.t)/1000;
+  const dx=cur.x-old.x, dy=cur.y-old.y, dz=(cur.z-old.z)*1.4;
+  const mag=Math.hypot(dx,dy,dz), speed=mag/dt;
+  if(speed<4.5*k || mag<0.5*k) return null;   // フック用の最低ライン（ストレート・アッパーは下で個別に厳しくする）
+  // 前半と後半で動きの向きがそろっているか
+  const a1=[mid.x-old.x,mid.y-old.y,(mid.z-old.z)*1.4], a2=[cur.x-mid.x,cur.y-mid.y,(cur.z-mid.z)*1.4];
+  if(a1[0]*a2[0]+a1[1]*a2[1]+a1[2]*a2[2] < 0) return null;
+  const lat=Math.abs(dx), up=Math.max(0,-dy), down=Math.max(0,dy), fwd=Math.max(0,-dz);
+  const inward=Math.abs(cur.x)<Math.abs(old.x)-0.3*k, dReach=cur.reach-old.reach, dAng=cur.ang-old.ang;
+  // フック：肘を上げたまま、横から内側へ
+  if(lat>=0.55*mag && inward && cur.elbY<0.55 && cur.ang>=50 && cur.ang<=150 && cur.y>-1.2 && cur.y<0.8 && up<0.6*mag)
+    return {kind:"hook",score:lat};
+  if(speed<5.5*k || mag<0.6*k) return null;
+  // アッパー：曲げた肘のまま、胸〜あごの高さから上へ
+  if(up>=0.6*mag && old.y<0.75 && old.y>-0.6 && cur.y<-0.25 && old.ang<=140 && cur.ang<=150 && dReach>-0.2 && dz<=0.15*mag && !T.wasLow)   // 拳が体の方へ引かれる動き（耳の横へのガード）は除外
+    return {kind:"upper",score:up};
+  // ストレート系：肘が伸びきって、拳が遠くへ
+  if(dReach>=0.45*k && cur.ang>=130 && dAng>=12 && down<=0.35*mag && up<0.6*mag && (fwd>=0.35*mag || dReach>=0.6*k))
+    return {kind:"straight",score:dReach};
+  return null;
+}
 function analyzePose(res,nowMs){
   const lm=res.landmarks?.[0], wl=res.worldLandmarks?.[0];
   if(!lm||!wl){ lastPose=null; lastWorld=null; defState={}; return; }
@@ -746,29 +783,35 @@ function analyzePose(res,nowMs){
   const midX=(lm[11].x+lm[12].x)/2, shY=(lm[11].y+lm[12].y)/2;
   lastWorld=wl; lastImg={x:midX,y:shY,sw:sw2};
   if(cfg.mode!=="mitt"||cfg.view==="fp") computeDefense(lm,sw2,shY);
-  for(const [hand,wi,si] of [["L",15,11],["R",16,12]]){
-    const w=lm[wi], vis=(w.visibility??1);
-    const T=track[hand];
-    if(vis<0.4){ T.hist=[]; continue; }
-    const p={x:(w.x-midX)/sw2, y:(w.y-shY)/sw2, z:wl[wi].z/swW}; // 肩幅単位。x:画像右が+, y:下が+, z:カメラに近いほど−
-    T.s=smooth(T.s,p); T.hist.push({t:nowMs,...T.s});
-    while(T.hist.length&&nowMs-T.hist[0].t>WIN_MS+60) T.hist.shift();
-    if(nowMs<T.cool||T.hist.length<3) continue;
-    const old=T.hist.find(h=>nowMs-h.t<=WIN_MS)||T.hist[0], dt=(nowMs-old.t)/1000;
-    if(dt<0.06) continue;
-    const dx=T.s.x-old.x, dy=T.s.y-old.y, dz=(T.s.z-old.z)*1.6; // zは小さく出がちなので重み付け
-    const mag=Math.hypot(dx,dy,dz), speed=mag/dt;
-    const k=SENS[cfg.sens];
-    if(speed<5.0*k||mag<0.55*k) continue;
-    const inward=Math.abs(T.s.x)<Math.abs(old.x)-0.25;      // 体の中心へ向かう横移動
-    const lat=Math.abs(dx), up=Math.max(0,-dy), fwd=Math.max(0,-dz);
-    let kind=null;
-    if(lat>=0.62*mag && inward && T.s.y<0.9) kind="hook";
-    else if(up>=0.62*mag && T.s.y<0.6) kind="upper";
-    else if(fwd>=0.45*mag || (lat<0.5*mag && up<0.62*mag && dy<=0.15)) kind="straight";
-    if(!kind) continue;
-    T.cool=nowMs+COOLDOWN; T.hist=[];
-    onPunch(hand,kind,nowMs/1000,{lat,up,fwd,speed});
+  const k=SENS[cfg.sens];
+  for(const [hand,wi,ei,si] of [["L",15,13,11],["R",16,14,12]]){
+    const w=lm[wi], T=track[hand];
+    if((w.visibility??1)<0.4 || (lm[ei].visibility??1)<0.3){ T.hist=[]; continue; }
+    const raw={x:(w.x-midX)/sw2, y:(w.y-shY)/sw2, z:wl[wi].z/swW,           // 手首（肩の中心からの位置）
+      elbY:(lm[ei].y-lm[si].y)/sw2,                                          // 肘が肩よりどれだけ下か
+      ang:angleDeg(wl[si],wl[ei],wl[wi]),                                    // 肘の角度（180°＝まっすぐ）
+      reach:Math.hypot(wl[wi].x-wl[si].x,wl[wi].y-wl[si].y,wl[wi].z-wl[si].z)/swW};  // 肩から手首までの距離
+    T.s=smooth(T.s,raw); const cur={t:nowMs,...T.s}; T.hist.push(cur);
+    // 直前0.5秒に手が胸より下にあった ＝ ガードを上げ直しているだけ（アッパーにしない）
+    if(cur.y>0.85) T.lowAt=nowMs; T.wasLow=nowMs-(T.lowAt||-1e9)<500;
+    while(T.hist.length&&nowMs-T.hist[0].t>WIN_MAX+40) T.hist.shift();
+    // 一度打った手は「引き戻した」ら再び受け付ける
+    if(!T.armed){
+      const back = T.last==="straight" ? (cur.reach<T.peakReach-0.35 || cur.ang<115) : (nowMs-T.firedAt>350);
+      T.peakReach=Math.max(T.peakReach,cur.reach);
+      if(back || nowMs-T.firedAt>1200) T.armed=true; else continue;
+    }
+    if(T.hist.length<4) continue;
+    // いくつかの時間幅で調べ、いちばん条件に合うものを採用
+    let best=null;
+    for(const old of T.hist){
+      const age=nowMs-old.t; if(age<WIN_MIN||age>WIN_MAX) continue;
+      const mid=T.hist.reduce((m,h)=>Math.abs(h.t-(old.t+cur.t)/2)<Math.abs(m.t-(old.t+cur.t)/2)?h:m,old);
+      const c=classifyPunch(T,old,mid,cur,k); if(c&&(!best||c.score>best.score)) best=c;
+    }
+    if(!best) continue;
+    T.armed=false; T.last=best.kind; T.firedAt=nowMs; T.peakReach=cur.reach; T.hist=[];
+    onPunch(hand,best.kind,nowMs/1000,{});
   }
 }
 /*
