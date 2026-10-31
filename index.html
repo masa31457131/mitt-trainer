@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0B0E14">
+<meta name="theme-color" content="#1A2A63">
 <title>ARミット打ち</title>
 <!--
   ARミット打ち（ホームボクシング道場）
@@ -16,89 +16,177 @@
     ・HTTPS のURLで開くこと（カメラはHTTPSでないと使えない）。
       例：GitHub Pages / Netlify などにこの index.html を1枚置くだけ。
       PCで試すなら `python -m http.server` で http://localhost:8000 でも可。
-    ・インターネット接続が必要（3D描画ライブラリと姿勢推定AIモデルをCDNから読み込む）。
+    ・インターネット接続が必要（3D描画ライブラリ・姿勢推定AIモデル・書体をCDNから読み込む）。
     ・対応：iPhone Safari（iOS 16以降推奨）/ Android Chrome / PC Chrome。
   ■ 使っているもの
     ・Three.js r128（3D描画） … cdnjs
     ・MediaPipe Tasks Vision 0.10.14 Pose Landmarker lite（姿勢推定） … jsDelivr / Google Storage
+    ・書体：Dela Gothic One / Big Shoulders Display / Zen Kaku Gothic New … Google Fonts
   ■ データ保存
     ・ベストスコアと履歴はこの端末のブラウザ内（localStorage）にのみ保存。サーバー送信なし。
     ・カメラ映像は端末内で処理するだけで、どこにも送信・保存しない。
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
-/* Layout: full-screen layers — camera video (bottom) → 3D canvas → skeleton overlay → HUD/menus (top). Single dark "gym at night" theme on purpose. */
+/*
+  デザインの軸：「リングの上のコーナー」
+  ・色：リングのキャンバス地（青）、ロープ（赤・白・青）、チャンピオンベルト（金）、スコアカードの紙（白）
+  ・書体：見出し＝Dela Gothic One（ファイトポスター）／数字＝Big Shoulders Display（試合時計）／本文＝Zen Kaku Gothic New
+  ・レイアウト：メニューは左が「リング」（3Dデモが動く舞台）、右が「コーナー」（設定）。間をロープで仕切る
+  ・判定の文字はテーピングの帯、結果はジャッジのスコアカード
+  ・画面の重なり：カメラ映像 → 3D → 骨格 → HUD／メニュー
+*/
 :root{
   color-scheme:dark;
-  --bg:#0B0E14; --panel:#151A24; --line:#2A3242; --ink:#F1F3F7; --muted:#98A1B3;
-  --left:#E5384F;   /* 左手ミット＝赤 */
-  --right:#3B8BEB;  /* 右手ミット＝青 */
-  --gold:#FFC93C; --ok:#3DBE74;
-  --f-display:"Saira Condensed","Arial Narrow",Impact,sans-serif;
-  --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  --canvas:#1E2F6B;      /* リングのキャンバス地 */
+  --canvas-deep:#131D47; /* コーナー（設定パネル） */
+  --paper:#EEF0F4;       /* スコアカード・テーピング */
+  --ink:#0E1533;         /* 紙の上の文字 */
+  --chalk:#C3CCE6;       /* キャンバス上の補助文字 */
+  --line:rgba(238,240,244,.16);
+  --left:#E5384F;        /* 左手＝赤コーナー */
+  --right:#3B8BEB;       /* 右手＝青コーナー */
+  --gold:#F2B630;        /* ベルトの金：スコア・コンボ・相手のパンチ */
+  --ok:#2E9E5B;
+  --f-head:"Dela Gothic One","Hiragino Sans","Yu Gothic",sans-serif;
+  --f-num:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  --rope:linear-gradient(var(--left) 0 33.3%,var(--paper) 33.3% 66.6%,var(--right) 66.6% 100%);
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{height:100%;margin:0;color:var(--paper);font-family:var(--f-body);overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+/* キャンバス地の織り目（ごく薄く） */
+body{background:
+  radial-gradient(120% 90% at 30% 40%,transparent 40%,rgba(5,9,28,.55) 100%),
+  repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.022) 0 1px,transparent 1px 3px),
+  var(--canvas)}
 [hidden]{display:none!important}
 button{font:inherit;color:inherit;cursor:pointer}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
-.num{font-family:var(--f-display);font-variant-numeric:tabular-nums}
+button:focus-visible,summary:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 
 #video,#three,#skel{position:fixed;inset:0;width:100%;height:100%}
-#video{object-fit:cover;transform:scaleX(-1);filter:brightness(.55) saturate(.7)}
-#video.ghost{opacity:0} /* フィギュア表示中：映像は姿勢推定のためだけに再生し、画面には出さない */
-#skel{pointer-events:none}
-#three{pointer-events:none}
+#video{object-fit:cover;transform:scaleX(-1);filter:brightness(.6) saturate(.75)}
+#video.ghost{opacity:0} /* 一人称表示中：映像は姿勢推定のためだけに再生し、画面には出さない */
+#skel,#three{pointer-events:none}
 
-/* menu */
-.screen{position:fixed;inset:0;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 20px) 16px calc(env(safe-area-inset-bottom,0px) + 24px);background:var(--bg);z-index:20}
-.wrap{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
-.logo{font-family:var(--f-display);font-weight:800;font-size:44px;line-height:.95;letter-spacing:.02em}
-.logo .l{color:var(--left)} .logo .r{color:var(--right)}
-.lead{color:var(--muted);font-size:14px;line-height:1.7;margin:0}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
-.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:9px;border-top:1px solid var(--line)}
-.row:first-child{border-top:0}
-.row .k{font-weight:500;font-size:15px;white-space:nowrap}
-.seg{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
-.seg button{border:1px solid var(--line);background:transparent;border-radius:99px;padding:6px 12px;font-size:13px}
-.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700}
-.btn{border:0;border-radius:12px;padding:15px 18px;font-weight:700;font-size:17px;width:100%;background:var(--left);color:#fff}
-.btn.sub{background:transparent;border:1px solid var(--line);font-size:15px;padding:12px}
-.legend{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.legend div{border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center;font-size:12px;color:var(--muted)}
-.legend b{display:block;font-family:var(--f-display);font-size:26px;line-height:1;color:var(--ink)}
-.legend .L b{color:var(--left)} .legend .R b{color:var(--right)}
-.tips{margin:0;padding-left:1.2em;color:var(--muted);font-size:13px;line-height:1.8}
-.best{font-size:13px;color:var(--muted)}
+/* ===== メニュー：リング（左）＋コーナー（右） ===== */
+.screen{position:fixed;inset:0;z-index:20}
+#menu{display:grid;grid-template-columns:minmax(0,1fr) minmax(330px,440px);grid-template-rows:minmax(0,1fr)}
+.stage{position:relative;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;gap:16px;
+  padding:calc(env(safe-area-inset-top,0px) + 22px) 24px calc(env(safe-area-inset-bottom,0px) + 18px) calc(env(safe-area-inset-left,0px) + 24px);
+  background:linear-gradient(180deg,rgba(14,21,51,.62) 0%,rgba(14,21,51,0) 38%,rgba(14,21,51,0) 64%,rgba(14,21,51,.7) 100%)}
+.title{margin:0;font-family:var(--f-head);font-weight:400;font-size:clamp(40px,7.2vw,76px);line-height:1.02;letter-spacing:.01em;text-shadow:0 4px 24px rgba(5,9,28,.6)}
+.title small{display:block;font-family:var(--f-num);font-weight:900;font-size:.36em;letter-spacing:.14em;color:var(--gold);margin-bottom:.25em}
+.lead{max-width:34em;margin:.9em 0 0;color:var(--chalk);font-size:14px;line-height:1.8;text-shadow:0 1px 8px rgba(5,9,28,.8)}
+.legend{display:flex;flex-wrap:wrap;gap:6px}
+.legend div{display:flex;align-items:baseline;gap:6px;padding:4px 10px 5px 8px;background:rgba(14,21,51,.62);border-left:4px solid var(--gold);font-size:12px;color:var(--chalk);border-radius:0 3px 3px 0}
+.legend b{font-family:var(--f-num);font-weight:900;font-size:22px;line-height:1;color:var(--paper)}
+.legend .L{border-left-color:var(--left)} .legend .L b{color:#FF8796}
+.legend .R{border-left-color:var(--right)} .legend .R b{color:#86B9FF}
+.legend.def b{font-family:var(--f-body);font-weight:700;font-size:13px;color:var(--gold)}
+.legend-wrap{display:flex;flex-direction:column;gap:8px}
+.legend-cap{font-size:12px;color:var(--chalk);margin:0}
 
-/* HUD */
-#hud{position:fixed;inset:0;z-index:10;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px calc(env(safe-area-inset-bottom,0px) + 12px)}
-.hudtop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;text-shadow:0 2px 8px rgba(0,0,0,.6)}
-.hudtop .score{font-family:var(--f-display);font-weight:800;font-size:44px;line-height:.9}
-.hudtop .lab{font-size:11px;letter-spacing:.12em;color:var(--muted);font-weight:700}
-.hudtop .time{font-family:var(--f-display);font-weight:800;font-size:34px;line-height:.9;text-align:right}
-.hudtop .combo{font-family:var(--f-display);font-weight:800;font-size:22px;color:var(--gold);text-align:center}
-#fb{position:fixed;left:0;right:0;top:38%;text-align:center;z-index:11;pointer-events:none;font-family:var(--f-display);font-weight:800;font-size:clamp(40px,12vw,84px);letter-spacing:.04em;text-shadow:0 4px 18px rgba(0,0,0,.7)}
-#fbSub{position:fixed;left:16px;right:16px;top:calc(38% + clamp(48px,13vw,92px));text-align:center;z-index:11;pointer-events:none;font-size:clamp(15px,4vw,22px);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
-.pop{animation:pop .5s ease-out}
-@keyframes pop{0%{transform:scale(1.4);opacity:0}25%{opacity:1}100%{transform:scale(1);opacity:1}}
+/* コーナー：ロープで仕切った設定パネル */
+.corner{position:relative;min-width:0;overflow-y:auto;background:var(--canvas-deep);
+  padding:calc(env(safe-area-inset-top,0px) + 20px) calc(env(safe-area-inset-right,0px) + 20px) calc(env(safe-area-inset-bottom,0px) + 24px) 32px;
+  display:flex;flex-direction:column;gap:18px}
+.ropes{position:absolute;left:0;top:0;bottom:0;width:12px;background:linear-gradient(90deg,var(--left) 0 4px,var(--paper) 4px 8px,var(--right) 8px 12px);box-shadow:4px 0 14px rgba(0,0,0,.35)}
+.group{display:flex;flex-direction:column;gap:2px}
+.group h2{margin:0 0 6px;font-family:var(--f-body);font-weight:700;font-size:13px;color:var(--chalk)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:8px;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .k{font-size:14px;white-space:nowrap}
+.seg{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
+.seg button{border:1px solid var(--line);background:transparent;border-radius:3px;padding:6px 10px;font-size:13px;color:var(--chalk)}
+.seg button:hover{border-color:rgba(238,240,244,.4);color:var(--paper)}
+.seg button[aria-pressed="true"]{background:var(--paper);color:var(--ink);border-color:var(--paper);font-weight:700}
+/* モード：大きな3択 */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;justify-content:stretch}
+.modes button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:12px 10px 11px;border-radius:4px;border:1px solid var(--line);min-width:0}
+.modes .mt{font-family:var(--f-head);font-size:17px;line-height:1.2;color:var(--paper)}
+.modes .md{font-size:11px;line-height:1.45;color:var(--chalk)}
+.modes button[aria-pressed="true"]{box-shadow:inset 0 4px 0 var(--gold)}
+.modes button[aria-pressed="true"] .mt,.modes button[aria-pressed="true"] .md{color:var(--ink)}
+.cta{display:flex;flex-direction:column;gap:8px;position:sticky;bottom:calc(-1 * (env(safe-area-inset-bottom,0px) + 24px));z-index:2;
+  margin:0 -20px 0 -32px;padding:12px 20px calc(env(safe-area-inset-bottom,0px) + 16px) 32px;background:linear-gradient(rgba(19,29,71,0),var(--canvas-deep) 18px)}
+.btn{border:0;border-radius:4px;padding:15px 18px;font-family:var(--f-head);font-size:18px;width:100%;background:var(--left);color:#fff;box-shadow:inset 0 -4px 0 rgba(0,0,0,.22)}
+.btn:hover{filter:brightness(1.08)}
+.btn:active{transform:translateY(1px);box-shadow:inset 0 -2px 0 rgba(0,0,0,.22)}
+.btn.sub{background:transparent;border:1px solid var(--line);font-family:var(--f-body);font-weight:700;font-size:14px;padding:12px;box-shadow:none;color:var(--paper)}
+.best{font-size:13px;color:var(--gold);margin:0}
+details.tips{border-top:1px solid var(--line);padding-top:12px}
+details.tips summary{cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between}
+details.tips summary::after{content:"＋";color:var(--chalk)} details.tips[open] summary::after{content:"−"}
+details.tips ul{margin:10px 0 0;padding-left:1.2em;color:var(--chalk);font-size:13px;line-height:1.85}
+details.tips b{color:var(--paper)}
+.err{color:#FFB0B8;font-size:13px;line-height:1.7;margin:0;padding:10px 12px;border-left:4px solid var(--left);background:rgba(229,56,79,.12)}
+
+/* 背の低い横画面（スマホ横向き）：見出しを小さく、凡例は選んだモードの分だけ */
+@media (max-height:520px) and (orientation:landscape){
+  .title{font-size:clamp(28px,8.5vh,40px)}
+  .lead{font-size:12px;line-height:1.65;margin-top:.5em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .legend-cap{display:none}
+  .legend div{padding:2px 8px 3px 6px}
+  .legend b{font-size:18px}
+  #menu[data-mode="mix"] #dlegend{display:none}
+  .corner{gap:12px;padding-top:calc(env(safe-area-inset-top,0px) + 14px)}
+  .row{padding-block:5px}
+  .modes button{padding:9px 9px 8px}
+}
+/* 縦長・幅の狭い画面：リングを上、コーナーを下に */
+@media (max-width:720px),(orientation:portrait){
+  #menu{grid-template-columns:1fr;grid-template-rows:auto auto;overflow-y:auto;display:block}
+  .stage{min-height:52vh;padding-right:20px;padding-left:20px}
+  .corner{overflow:visible;padding-left:20px;padding-top:30px}
+  .cta{margin-left:-20px;padding-left:20px}
+  .ropes{left:0;right:0;top:0;bottom:auto;width:auto;height:12px;background:var(--rope)}
+  .ropes{background:linear-gradient(180deg,var(--left) 0 4px,var(--paper) 4px 8px,var(--right) 8px 12px)}
+}
+
+/* ===== HUD（試合中） ===== */
+#hud{position:fixed;inset:0;z-index:10;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) calc(env(safe-area-inset-right,0px) + 14px) calc(env(safe-area-inset-bottom,0px) + 12px) calc(env(safe-area-inset-left,0px) + 14px)}
+.hudtop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.scorebox{display:flex;align-items:baseline;gap:4px;text-shadow:0 2px 12px rgba(5,9,28,.8)}
+.scorebox .score{font-family:var(--f-num);font-weight:900;font-size:54px;line-height:.85}
+.scorebox .u{font-size:13px;color:var(--chalk)}
+.clock{font-family:var(--f-num);font-weight:900;font-size:38px;line-height:1;padding:4px 12px 5px;background:rgba(14,21,51,.72);border-bottom:3px solid var(--gold);border-radius:3px;font-variant-numeric:tabular-nums}
+.combo{font-family:var(--f-num);font-weight:900;font-size:30px;color:var(--gold);text-align:center;line-height:1;text-shadow:0 2px 12px rgba(5,9,28,.8)}
 .hudbot{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
-#detect{font-size:13px;background:rgba(0,0,0,.55);border:1px solid var(--line);border-radius:10px;padding:6px 10px;max-width:60%}
-#detect b{font-size:16px}
-#stopBtn{pointer-events:auto;border:1px solid rgba(255,255,255,.5);background:rgba(0,0,0,.45);border-radius:10px;padding:8px 14px;font-size:14px}
-#status{position:fixed;left:16px;right:16px;top:30%;z-index:12;text-align:center;font-size:18px;font-weight:700;line-height:1.7;text-shadow:0 2px 10px #000;pointer-events:none}
-#status .big{font-family:var(--f-display);font-size:96px;line-height:1;display:block;color:var(--gold)}
+#detect{font-size:12px;color:var(--ink);background:var(--paper);padding:5px 12px 6px;transform:rotate(-1.5deg);max-width:62%;box-shadow:0 3px 10px rgba(0,0,0,.3)}
+#detect b{font-family:var(--f-head);font-weight:400;font-size:14px}
+#hDef{color:#9A6B00;font-weight:700}
+#stopBtn{pointer-events:auto;border:1px solid rgba(238,240,244,.5);background:rgba(14,21,51,.6);border-radius:3px;padding:8px 14px;font-size:13px}
+/* 判定の文字：テーピングの帯を斜めに貼ったように */
+#fb{position:fixed;left:50%;top:36%;z-index:11;pointer-events:none;width:max-content;max-width:92vw;
+  font-family:var(--f-head);font-size:clamp(34px,9vw,68px);line-height:1.1;padding:.08em .45em .12em;
+  transform:translateX(-50%) rotate(-3deg);background:var(--paper);color:var(--ink);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+#fb:empty{display:none}
+#fb[data-tone="gold"]{background:var(--gold);color:var(--ink)}
+#fb[data-tone="red"]{background:var(--left);color:#fff}
+#fb[data-tone="blue"]{background:var(--right);color:#fff}
+#fb[data-tone="grey"]{background:#56628A;color:var(--paper)}
+#fbSub{position:fixed;left:16px;right:16px;top:calc(36% + clamp(56px,13vw,100px));text-align:center;z-index:11;pointer-events:none;font-size:clamp(14px,3.6vw,19px);font-weight:700;text-shadow:0 2px 10px rgba(5,9,28,.95)}
+.pop{animation:stamp .42s cubic-bezier(.2,1.4,.4,1)}
+@keyframes stamp{0%{transform:translateX(-50%) rotate(-9deg) scale(1.5);opacity:0}30%{opacity:1}100%{transform:translateX(-50%) rotate(-3deg) scale(1);opacity:1}}
+#status{position:fixed;left:16px;right:16px;top:24%;z-index:12;text-align:center;font-family:var(--f-head);font-size:20px;line-height:1.6;text-shadow:0 2px 12px rgba(5,9,28,.95);pointer-events:none}
+#status .big{font-family:var(--f-num);font-weight:900;font-size:min(32vh,170px);line-height:.9;display:block;color:var(--gold)}
 
-/* tap pad (no-camera mode) */
-#pad{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 56px);z-index:13;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;padding:0 10px}
-#pad button{border:0;border-radius:10px;padding:10px 0 8px;font-family:var(--f-display);font-weight:800;font-size:24px;line-height:1;color:#fff;display:flex;flex-direction:column;align-items:center;gap:2px}
-#pad button span{font-family:var(--f-body);font-size:10px;font-weight:500}
+/* カメラなし（タップ）の操作ボタン */
+#pad{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);z-index:13;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;padding:0 12px}
+#pad button{border:0;border-radius:4px;padding:9px 0 8px;font-family:var(--f-num);font-weight:900;font-size:26px;line-height:1;color:#fff;display:flex;flex-direction:column;align-items:center;gap:3px;box-shadow:inset 0 -4px 0 rgba(0,0,0,.22)}
+#pad button span{font-family:var(--f-body);font-size:10px;font-weight:700}
+#pad button:active{transform:translateY(1px)}
 #pad .L{background:var(--left)} #pad .R{background:var(--right)}
-#pad .D{background:#8A6A12;grid-column:span 3}
+#pad .D{background:var(--canvas-deep);border:1px solid var(--gold);color:var(--gold);font-family:var(--f-head);font-weight:400;grid-column:span 3;box-shadow:none}
 #pad.two{grid-template-columns:repeat(12,1fr)} #pad.two .L,#pad.two .R{grid-column:span 2}
 #pad.one-def{grid-template-columns:repeat(4,1fr)} #pad.one-def .D{grid-column:auto}
+
 /* 被弾したときの赤いフラッシュと画面の揺れ */
 #dmg{position:fixed;inset:0;z-index:9;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(229,56,79,0) 35%,rgba(229,56,79,.75) 100%)}
 #dmg.on{animation:dmg .45s ease-out}
@@ -107,23 +195,30 @@ body.shake #three,body.shake #video{animation:shake .3s linear}
 @keyframes shake{0%,100%{transform:translate(0,0)}20%{transform:translate(-14px,6px)}40%{transform:translate(12px,-8px)}60%{transform:translate(-8px,4px)}80%{transform:translate(6px,-3px)}}
 body.shake #video{animation-name:shakev}
 @keyframes shakev{0%,100%{transform:scaleX(-1)}20%{transform:scaleX(-1) translate(14px,6px)}40%{transform:scaleX(-1) translate(-12px,-8px)}60%{transform:scaleX(-1) translate(8px,4px)}}
-.legend.def{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.legend.def div{text-align:left;padding:8px 10px}
-.legend.def b{font-size:15px;font-family:var(--f-body);color:var(--gold);margin-bottom:2px}
-.sec{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted);margin:2px 0 -6px}
 
-/* result */
-.res-score{font-family:var(--f-display);font-weight:800;font-size:84px;line-height:.9}
-.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;text-align:center}
-.grid3 .v{font-family:var(--f-display);font-weight:800;font-size:28px}
-.grid3 .k{font-size:11px;color:var(--muted)}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{padding:7px 4px;border-top:1px solid var(--line);text-align:left}
-th{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.06em;border-top:0}
-td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-numeric:tabular-nums}
-.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:60px}
+/* ===== 結果：ジャッジのスコアカード ===== */
+#result{overflow-y:auto;background:inherit;padding:calc(env(safe-area-inset-top,0px) + 20px) 16px calc(env(safe-area-inset-bottom,0px) + 24px)}
+.card-wrap{max-width:600px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.scorecard{background:var(--paper);color:var(--ink);padding:18px 20px 20px;border-radius:2px;box-shadow:0 18px 50px rgba(5,9,28,.45);border-top:8px solid transparent;border-image:linear-gradient(90deg,var(--left) 0 33.3%,var(--paper) 33.3% 66.6%,var(--right) 66.6%) 1}
+.sc-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:8px}
+.sc-head h1{margin:0;font-family:var(--f-head);font-weight:400;font-size:22px}
+.sc-head .meta{font-size:12px;color:#4A5478}
+.res-score{font-family:var(--f-num);font-weight:900;font-size:clamp(84px,18vw,128px);line-height:.85;margin-top:12px}
+.res-score+.best{color:#9A6B00;font-weight:700;margin-top:4px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));border:2px solid var(--ink);margin-top:14px}
+.grid3>div{padding:8px 10px 9px;border-right:1px solid var(--ink)}
+.grid3>div:last-child{border-right:0}
+.grid3 .v{font-family:var(--f-num);font-weight:900;font-size:32px;line-height:1}
+.grid3 .k{font-size:11px;color:#4A5478;margin-top:2px}
+.sc-table{margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 6px;border:1px solid rgba(14,21,51,.35);text-align:left}
+th{font-size:11px;color:#4A5478;font-weight:700;background:rgba(14,21,51,.05)}
+td.n{text-align:right;font-family:var(--f-num);font-weight:900;font-size:18px;font-variant-numeric:tabular-nums}
+.bar{height:8px;background:rgba(14,21,51,.12);overflow:hidden;min-width:60px}
 .bar i{display:block;height:100%;background:var(--ok)}
-.err{color:#FF8A8A;font-size:13px;line-height:1.7}
+.advice{margin:14px 0 0;font-size:13px;line-height:1.8;color:#2A3358}
+.actions{display:grid;grid-template-columns:2fr 1fr;gap:8px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -132,56 +227,66 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
 <canvas id="three"></canvas>
 <canvas id="skel"></canvas>
 
-<!-- ===== MENU ===== -->
+<!-- ===== メニュー ===== -->
 <section class="screen" id="menu">
-  <div class="wrap">
-    <div class="logo">AR<span class="l">MITT</span><span class="r">WORK</span></div>
-    <p class="lead" id="lead"></p>
-
-    <div class="sec" id="legendTitle">ミット（打つ）</div>
-    <div class="legend" id="legend"></div>
-    <div class="sec" id="dlegendTitle">相手のパンチ（防ぐ）</div>
-    <div class="legend def" id="dlegend"></div>
-
-    <div class="panel">
-      <div class="row"><span class="k">モード</span><div class="seg" data-key="mode"></div></div>
-      <div class="row"><span class="k">表示</span><div class="seg" data-key="view"></div></div>
-      <div class="row"><span class="k">構え</span><div class="seg" data-key="stance"></div></div>
+  <div class="stage">
+    <div>
+      <h1 class="title"><small>MITT WORK</small>ARミット打ち</h1>
+      <p class="lead" id="lead"></p>
+    </div>
+    <div class="legend-wrap">
+      <p class="legend-cap" id="legendTitle">ミットの番号（赤＝左手・青＝右手）</p>
+      <div class="legend" id="legend"></div>
+      <p class="legend-cap" id="dlegendTitle">相手のパンチと防ぎ方</p>
+      <div class="legend def" id="dlegend"></div>
+    </div>
+  </div>
+  <div class="corner">
+    <div class="ropes" aria-hidden="true"></div>
+    <div class="seg modes" data-key="mode" role="group" aria-label="モード"></div>
+    <div class="group">
+      <h2>練習の内容</h2>
       <div class="row"><span class="k">レベル</span><div class="seg" data-key="level"></div></div>
       <div class="row"><span class="k">技の範囲</span><div class="seg" data-key="prog"></div></div>
       <div class="row"><span class="k">時間</span><div class="seg" data-key="dur"></div></div>
+    </div>
+    <div class="group">
+      <h2>カメラと表示</h2>
+      <div class="row"><span class="k">表示</span><div class="seg" data-key="view"></div></div>
+      <div class="row"><span class="k">構え</span><div class="seg" data-key="stance"></div></div>
       <div class="row"><span class="k">判定の感度</span><div class="seg" data-key="sens"></div></div>
       <div class="row"><span class="k">音声コール</span><div class="seg" data-key="voice"></div></div>
       <div class="row"><span class="k">骨格表示</span><div class="seg" data-key="skel"></div></div>
     </div>
-
-    <button class="btn" id="startCam">カメラで始める</button>
-    <button class="btn sub" id="startTap">カメラなしで試す（タップ操作）</button>
-    <div class="err" id="err" hidden></div>
-    <div class="best" id="best"></div>
-
-    <div class="panel">
-      <ul class="tips">
-        <li>スマホは<b>横向き</b>で胸〜顔の高さに立てかけ、<b>1.5〜2m</b>離れて上半身全体（両肩・両手）が映るように。</li>
+    <div class="cta">
+      <p class="best" id="best"></p>
+      <button class="btn" id="startCam">カメラで始める</button>
+      <button class="btn sub" id="startTap">カメラなしで試す（タップ操作）</button>
+      <p class="err" id="err" hidden></p>
+    </div>
+    <details class="tips">
+      <summary>うまく判定させるコツ</summary>
+      <ul>
+        <li>スマホは<b>横向き</b>で胸〜顔の高さに立てかけ、<b>1.5〜2m</b>離れて上半身全体（両肩・両手）が映るようにします。</li>
         <li>明るい部屋で、背景はなるべくシンプルに。服と背景の色が近いと判定が落ちます。</li>
-        <li>ストレートは<b>カメラに向かってまっすぐ</b>、フックは<b>横から内側へ</b>、アッパーは<b>下から上へ</b>。動きを少し大きめにすると判定が安定します。</li>
-        <li><b>ガード</b>：ジャブ・ストレートは両手で顔の前、フックは来る側の手を耳の横、アッパーは両手をあごの前に。頭を動かすスリップ（横）・ダッキング（下）・スウェー（後ろ）でもかわせます。</li>
-        <li><b>グローブのみ（一人称）</b>：実際のミット打ちと同じく、自分の目から見た視点で、自分の透明なグローブだけを表示します。部屋や服装を映したくないときにも使えます。</li>
+        <li>ストレートは<b>肘が伸びきるまで</b>まっすぐ、フックは<b>肘を肩の高さに上げて横から</b>、アッパーは<b>あごの高さまで突き上げる</b>と判定が安定します。</li>
+        <li><b>ガード</b>：ジャブ・ストレートは両手で顔の前、フックは来る側の手を耳の横、アッパーは両手をあごの前に。スリップ（横）・ダッキング（下）・スウェー（後ろ）でもかわせます。</li>
+        <li><b>グローブのみ（一人称）</b>：自分の目から見た視点で、透明なグローブだけを表示します。部屋や服装を映したくないときにも使えます。</li>
         <li>周りに物や人がいないか確認してから始めてください。</li>
       </ul>
-    </div>
+    </details>
   </div>
 </section>
 
-<!-- ===== HUD ===== -->
+<!-- ===== HUD（試合中） ===== -->
 <div id="hud" hidden>
   <div class="hudtop">
-    <div><div class="lab">SCORE</div><div class="score num" id="hScore">0</div></div>
+    <div class="scorebox"><span class="score num" id="hScore">0</span><span class="u">点</span></div>
     <div class="combo num" id="hCombo"></div>
-    <div><div class="lab" style="text-align:right">TIME</div><div class="time num" id="hTime">1:00</div></div>
+    <div class="clock num" id="hTime" aria-label="残り時間">1:00</div>
   </div>
   <div class="hudbot">
-    <div id="detect">判定：<b id="hDet">—</b> <span id="hDef" style="color:var(--gold)"></span></div>
+    <div id="detect">判定 <b id="hDet">—</b> <span id="hDef"></span></div>
     <button id="stopBtn">終了</button>
   </div>
 </div>
@@ -191,33 +296,37 @@ td.n{text-align:right;font-family:var(--f-display);font-size:18px;font-variant-n
 <div id="status" hidden></div>
 <div id="pad" hidden></div>
 
-<!-- ===== RESULT ===== -->
+<!-- ===== 結果：スコアカード ===== -->
 <section class="screen" id="result" hidden>
-  <div class="wrap">
-    <div class="best" style="letter-spacing:.12em;font-weight:700">RESULT</div>
-    <div class="res-score num" id="rScore">0</div>
-    <div id="rBest" class="best"></div>
-    <div class="panel grid3">
-      <div id="rAccBox"><div class="v num" id="rAcc">0%</div><div class="k">ミット命中率</div></div>
-      <div id="rDefBox"><div class="v num" id="rDef">0%</div><div class="k">防御成功率</div></div>
-      <div><div class="v num" id="rMax">0</div><div class="k">最大コンボ</div></div>
-      <div id="rPerfBox"><div class="v num" id="rPerf">0</div><div class="k">PERFECT</div></div>
+  <div class="card-wrap">
+    <div class="scorecard">
+      <div class="sc-head"><h1>スコアカード</h1><span class="meta" id="rMeta"></span></div>
+      <div class="res-score num" id="rScore">0</div>
+      <p id="rBest" class="best"></p>
+      <div class="grid3">
+        <div id="rAccBox"><div class="v num" id="rAcc">0%</div><div class="k">ミット命中率</div></div>
+        <div id="rDefBox"><div class="v num" id="rDef">0%</div><div class="k">防御成功率</div></div>
+        <div><div class="v num" id="rMax">0</div><div class="k">最大コンボ</div></div>
+        <div id="rPerfBox"><div class="v num" id="rPerf">0</div><div class="k">パーフェクト</div></div>
+      </div>
+      <div class="sc-table" id="rMittPanel">
+        <table>
+          <thead><tr><th>パンチ</th><th>命中</th><th style="text-align:right">打ち間違い</th><th style="text-align:right">見逃し</th></tr></thead>
+          <tbody id="rTable"></tbody>
+        </table>
+      </div>
+      <div class="sc-table" id="rDefPanel">
+        <table>
+          <thead><tr><th>相手のパンチ</th><th>防御</th><th style="text-align:right">成功</th><th style="text-align:right">被弾</th></tr></thead>
+          <tbody id="rDTable"></tbody>
+        </table>
+      </div>
+      <p class="advice" id="rAdvice"></p>
     </div>
-    <div class="panel" id="rMittPanel">
-      <table>
-        <thead><tr><th>パンチ</th><th>命中</th><th style="text-align:right">打ち間違い</th><th style="text-align:right">見逃し</th></tr></thead>
-        <tbody id="rTable"></tbody>
-      </table>
+    <div class="actions">
+      <button class="btn" id="again">もう一度</button>
+      <button class="btn sub" id="toMenu">メニューへ</button>
     </div>
-    <div class="panel" id="rDefPanel">
-      <table>
-        <thead><tr><th>相手のパンチ</th><th>防御</th><th style="text-align:right">成功</th><th style="text-align:right">被弾</th></tr></thead>
-        <tbody id="rDTable"></tbody>
-      </table>
-    </div>
-    <p class="lead" id="rAdvice"></p>
-    <button class="btn" id="again">もう一度</button>
-    <button class="btn sub" id="toMenu">メニューへ</button>
   </div>
 </section>
 
@@ -303,15 +412,20 @@ function idFrom(hand,kind){ for(const id in PUNCH){ if(PUNCH[id].kind===kind && 
 /* =====================================================================
    メニュー描画
    ===================================================================== */
+const MODE_DESC={mitt:"奥から来るミットを打ち抜く",guard:"相手のパンチを防ぐ",mix:"打ったら、すぐ守る"};
 function renderMenu(){
   document.querySelectorAll(".seg").forEach(seg=>{
     const k=seg.dataset.key;
-    seg.innerHTML=Object.entries(OPT[k].label).map(([v,l])=>`<button aria-pressed="${String(cfg[k])===v}" data-v="${v}">${l}</button>`).join("");
+    const desc=k==="mode"?MODE_DESC:null;   // モードは説明つきの大きな3択にする
+    seg.innerHTML=Object.entries(OPT[k].label).map(([v,l])=>desc
+      ? `<button aria-pressed="${String(cfg[k])===v}" data-v="${v}"><span class="mt">${l}</span><span class="md">${desc[v]}</span></button>`
+      : `<button aria-pressed="${String(cfg[k])===v}" data-v="${v}">${l}</button>`).join("");
   });
   $("#legend").innerHTML=[1,2,3,4,5,6].map(id=>`<div class="${handOf(id)}"><b>${id}</b>${nameOf(id)}</div>`).join("");
   $("#dlegend").innerHTML=[["ジャブ・ストレート","両手で顔の前をガード／スリップ"],["フック（左から）","左手を耳の横へ／ダッキング"],
     ["フック（右から）","右手を耳の横へ／ダッキング"],["アッパー（下から）","両手をあごの前へ／スウェー"]]
     .map(([a,d])=>`<div><b>${a}</b>${d}</div>`).join("");
+  $("#menu").dataset.mode=cfg.mode;
   const showM=cfg.mode!=="guard", showD=cfg.mode!=="mitt";
   $("#legend").hidden=$("#legendTitle").hidden=!showM; $("#dlegend").hidden=$("#dlegendTitle").hidden=!showD;
   $("#lead").innerHTML={
@@ -323,6 +437,7 @@ function renderMenu(){
 }
 document.addEventListener("click",e=>{
   const b=e.target.closest(".seg button"); if(!b) return;
+  if(!b.parentElement.dataset.key) return;
   cfg[b.parentElement.dataset.key]=b.dataset.v; saveCfg(); renderMenu();
 });
 const bestKey=()=>cfg.mode==="mitt"?cfg.level:`${cfg.mode}_${cfg.level}`; // ミット打ちは以前の記録をそのまま引き継ぐ
@@ -376,7 +491,7 @@ const sun=new THREE.DirectionalLight(0xffffff,0.9); sun.position.set(2,4,5); sce
 const bgScene=new THREE.Scene(); bgScene.fog=new THREE.Fog(0x0B0E14,18,42);
 bgScene.add(new THREE.HemisphereLight(0xffffff,0x334466,0.9)); { const l=new THREE.DirectionalLight(0xffffff,0.9); l.position.set(2,4,5); bgScene.add(l); }
 function render3D(){
-  if(cfg.view==="fp"){ renderer.autoClear=false; renderer.clear(); renderer.render(bgScene,cam); renderer.clearDepth(); renderer.render(scene,cam); renderer.autoClear=true; }
+  if(isFP()){ renderer.autoClear=false; renderer.clear(); renderer.render(bgScene,cam); renderer.clearDepth(); renderer.render(scene,cam); renderer.autoClear=true; }
   else renderer.render(scene,cam);
 }
 
@@ -425,7 +540,7 @@ function makeMitt(id){
   return g;
 }
 function targetPos(id){
-  if(cfg.view==="fp") return fpTargetPos(id);
+  if(isFP()) return fpTargetPos(id);
   const hand=handOf(id), kind=PUNCH[id].kind, s=hand==="L"?-1:1; // s：打つ手の側（鏡像表示なので左手は画面の左側）。サウスポーは handOf() で自動的に左右が入れ替わる
   const W=Math.min(halfW,halfH*1.2);
   // ストレート系：打つ手と反対側に置く（実際のミット持ちと同じ。オーソドックスならジャブ＝右側、ストレート＝左側）
@@ -437,7 +552,7 @@ function targetPos(id){
   return new THREE.Vector3(-s*W*0.2, halfH*0.32, HIT_Z);
 }
 const MITT_TILT = THREE.MathUtils.degToRad(78); // フック・アッパーのミットを傾ける角度
-function mittScale(){ if(cfg.view==="fp") return 0.19; return Math.max(0.35,Math.min(0.62,Math.min(halfW,halfH)*0.3)); } // 画面の短い辺に合わせて大きさを決める
+function mittScale(){ if(isFP()) return 0.19; return Math.max(0.35,Math.min(0.62,Math.min(halfW,halfH)*0.3)); } // 画面の短い辺に合わせて大きさを決める
 
 /* 相手のグローブ（金色）。拳の面を +z（こちら側）に向けて作り、種類ごとに向きを変える */
 function atkLabelTex(a){
@@ -469,7 +584,7 @@ function makeGlove(a){
 const GLOVE_END_Z=-1.25, GLOVE_START_Z=-26;
 // k=0（遠く）→1（顔の前）の位置。フックは外側に弧を描いて横から、アッパーは下から入ってくる
 function glovePos(a,k){
-  if(cfg.view==="fp"){ // 一人称：自分の顔の少し前で止まるよう、縮めて目の前へ
+  if(isFP()){ // 一人称：自分の顔の少し前で止まるよう、縮めて目の前へ
     const p=glovePosBase(a,k), f=0.3;
     return new THREE.Vector3(p.x*f, -0.05+p.y*f, GLOVE_START_Z+(-0.3-GLOVE_START_Z)*k);
   }
@@ -678,7 +793,7 @@ function buildRing(){
 let headMove={x:0,y:0}, headF=null;
 let lastWorld=null, lastImg=null;
 function applyView(){
-  const fp=cfg.view==="fp";
+  const fp=isFP();
   if(fp){ cam.position.copy(FP.cam); cam.lookAt(0,-0.05,-3); grid.position.y=FLOOR_Y;
     if(!ringSet){ ringSet=buildRing(); bgScene.add(ringSet); }
     ringSet.visible=true; bgScene.background=ringSet.userData.bg; bgScene.add(grid); headF=null; }
@@ -686,16 +801,61 @@ function applyView(){
     if(ringSet) ringSet.visible=false; scene.add(grid); }
   video.classList.toggle("ghost",fp);
 }
+/* メニュー背景のデモ（ゲームセンターの「デモ画面」）
+   ミットが飛んできて、透明なグローブがその技で打ち抜く。説明を読まなくても遊び方が分かるように */
+let demo=null;
+const DEMO_SEQ=[1,2,3,2,5,4,1,6];
+const reducedMotion=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function isFP(){ return demo!==null || cfg.view==="fp"; }
+function demoStart(){
+  if(demo) return;
+  demo={next:now()+0.6,items:[],i:0};
+  applyView(); demoFrame();
+  if(reducedMotion()){ const m={id:1,obj:makeMitt(1),target:fpTargetPos(1),static:true}; m.obj.scale.setScalar(mittScale()); m.obj.position.copy(m.target); scene.add(m.obj); demo.items.push(m); }
+}
+function demoStop(){
+  if(!demo) return;
+  demo.items.forEach(m=>removeMitt(m)); demo=null; cam.clearViewOffset(); hideGloves(); applyView();
+  // デモの破片も片付ける（視点が近づくと大きく残って見えるため）
+  for(const sp of sparks){ scene.remove(sp.m); sp.m.geometry.dispose(); sp.m.material.dispose(); } sparks.length=0;
+}
+// リング（左側）の中心で動いて見えるよう、3Dの描画位置をずらす
+function demoFrame(){
+  const st=document.querySelector(".stage"); if(!st||!demo) return;
+  const r=st.getBoundingClientRect(), W=innerWidth, H=innerHeight;
+  const cx=r.left+r.width/2, cy=r.top+Math.min(r.height,H)/2;
+  cam.setViewOffset(W,H,W/2-cx,H/2-cy,W,H);
+}
+function demoTick(t){
+  updateGloves(null,t); updateFpCamera(t);
+  if(reducedMotion()) return;
+  if(t>=demo.next){
+    const id=DEMO_SEQ[demo.i++%DEMO_SEQ.length], m={id,obj:makeMitt(id),target:fpTargetPos(id),arrive:t+1.25};
+    m.obj.scale.setScalar(mittScale()); scene.add(m.obj); demo.items.push(m); demo.next=t+1.45;
+  }
+  for(const m of demo.items){
+    if(m.static||m.done) continue;
+    const r=(m.arrive-t)/1.25, k=Math.min(1,1-r), z=m.target.z+(-16-m.target.z)*Math.max(r,0);
+    const sx=m.target.x*0.15, sy=m.target.y*0.2+0.6;
+    m.obj.position.set(sx+(m.target.x-sx)*k, sy+(m.target.y-sy)*k, z);
+    if(!m.punched && t>=m.arrive-0.13){ m.punched=true; startGlovePunch(handOf(m.id),PUNCH[m.id].kind); }
+    if(t>=m.arrive){ burst(m.obj.position.clone(),COL[handOf(m.id)],m.id%3===0); removeMitt(m); m.done=true; }
+  }
+  demo.items=demo.items.filter(m=>!m.done);
+}
+addEventListener("resize",()=>{ if(demo) demoFrame(); });
+const DEMO_CAM=new THREE.Vector3(0,0.06,1.05);   // デモでは少し引いて、ミットとグローブ全体を見せる
 function updateFpCamera(t){
   if(!headF) headF=[new OneEuro(0.8,0.6),new OneEuro(0.8,0.6)];
   const x=headF[0].filter(-headMove.x*0.38*0.5,t), y=headF[1].filter(-headMove.y*0.38*0.5,t);
-  cam.position.set(FP.cam.x+x,FP.cam.y+y,FP.cam.z); cam.lookAt(x*0.5,-0.05+y*0.5,-3);
+  const base=demo?DEMO_CAM:FP.cam;
+  cam.position.set(base.x+x,base.y+y,base.z); cam.lookAt(x*0.5,-0.05+y*0.5,-3);
 }
 
 // 命中時の破片
 const sparks=[];
 function burst(pos,color,perfect){
-  const n=perfect?26:16, sc=cfg.view==="fp"?0.22:1; // 一人称ではミットが近く小さいので、破片も小さく
+  const n=perfect?26:16, sc=isFP()?0.22:1; // 一人称ではミットが近く小さいので、破片も小さく
   for(let i=0;i<n;i++){
     const m=new THREE.Mesh(new THREE.SphereGeometry(0.05*sc,6,6),new THREE.MeshBasicMaterial({color:perfect?0xFFC93C:color,transparent:true}));
     m.position.copy(pos); const v=new THREE.Vector3((Math.random()-.5)*6,(Math.random()-.3)*6,Math.random()*4).multiplyScalar(sc);
@@ -782,7 +942,7 @@ function analyzePose(res,nowMs){
   const swW=Math.hypot(wl[11].x-wl[12].x,wl[11].y-wl[12].y,wl[11].z-wl[12].z)||0.35; // 3Dの肩幅(m)
   const midX=(lm[11].x+lm[12].x)/2, shY=(lm[11].y+lm[12].y)/2;
   lastWorld=wl; lastImg={x:midX,y:shY,sw:sw2};
-  if(cfg.mode!=="mitt"||cfg.view==="fp") computeDefense(lm,sw2,shY);
+  if(cfg.mode!=="mitt"||isFP()) computeDefense(lm,sw2,shY);
   const k=SENS[cfg.sens];
   for(const [hand,wi,ei,si] of [["L",15,13,11],["R",16,14,12]]){
     const w=lm[wi], T=track[hand];
@@ -848,7 +1008,7 @@ function activeDef(a){ const t=now(); return ATK[a].ok.find(k=>defState[k] || (t
 
 function drawSkeleton(){
   const c=$("#skel"), x=c.getContext("2d"); x.clearRect(0,0,c.width,c.height);
-  if(cfg.skel!=="on"||!lastPose||video.hidden||cfg.view==="fp") return;
+  if(cfg.skel!=="on"||!lastPose||video.hidden||isFP()) return;
   // video は object-fit:cover + 鏡像。座標を画面に合わせて変換
   const vw=video.videoWidth||1, vh=video.videoHeight||1, cw=c.width, ch=c.height;
   const sc=Math.max(cw/vw,ch/vh), ox=(cw-vw*sc)/2, oy=(ch-vh*sc)/2;
@@ -905,7 +1065,9 @@ function startGame(){
 }
 let fbTimer=0;
 function setFb(main,sub,color="#fff"){
-  const f=$("#fb"),s=$("#fbSub"); f.textContent=main; f.style.color=color; s.textContent=sub;
+  const f=$("#fb"),s=$("#fbSub"); f.textContent=main; s.textContent=sub;
+  // 帯の色：金＝パーフェクト／赤＝打ち間違い・被弾／青＝防御成功／灰＝見逃し／白＝そのほか
+  f.dataset.tone={"#FFC93C":"gold","#FF8A8A":"red","#7FD1FF":"blue","#98A1B3":"grey"}[color]||"white";
   f.classList.remove("pop"); void f.offsetWidth; if(main) f.classList.add("pop");
   clearTimeout(fbTimer); if(main) fbTimer=setTimeout(()=>{f.textContent="";s.textContent="";},900);
 }
@@ -933,7 +1095,7 @@ function onPunch(hand,kind,tSec,vals){
     const pts=Math.round((perfect?150:100)*L.mult*(1+Math.min(G.combo,20)*0.05));
     G.score+=pts; $("#hScore").textContent=G.score; $("#hCombo").textContent=G.combo>=3?`${G.combo} COMBO`:"";
     burst(best.obj.position.clone(),COL[handOf(best.id)],perfect); removeMitt(best);
-    sndHit(perfect); setFb(perfect?"PERFECT":"GOOD","",perfect?"#FFC93C":"#fff");
+    sndHit(perfect); setFb(perfect?"パーフェクト":"ナイス","",perfect?"#FFC93C":"#fff");
   }else{
     best.state="wrong"; G.combo=0; G.stats[best.id].wrong++; $("#hCombo").textContent="";
     sndMiss(); setFb("ちがう！",`いまのは「${nameOf(id)}」→ 正解は「${nameOf(best.id)}」`,"#FF8A8A");
@@ -950,8 +1112,8 @@ function loop(){
     try{ analyzePose(landmarker.detectForVideo(video,performance.now()),performance.now()); }catch(e){ console.warn(e); }
   }
   drawSkeleton();
-  if(G && cfg.view==="fp"){ updateGloves(mode==="tap"?null:lastWorld, t); updateFpCamera(t); }
-  if(!G){ render3D(); return; }
+  if(G && isFP()){ updateGloves(mode==="tap"?null:lastWorld, t); updateFpCamera(t); }
+  if(!G){ if(demo) demoTick(t); render3D(); return; }
 
   // カウントダウン（カメラ時は上半身が映っているか確認）
   const st=$("#status");
@@ -973,7 +1135,7 @@ function loop(){
     if(m.state==="fly"||m.state==="wrong"){
       const r=(m.arrive-t)/L.approach; // 1→0 で到達
       const hz=m.target.z; // 当てる位置の奥行き（表示モードで変わる）
-      const z=hz+(SPAWN_Z-hz)*Math.max(r,0)+(r<0?-r*L.approach*(cfg.view==="fp"?0.35:6):0); // 到達後は手前へ抜ける（一人称ではゆっくり）
+      const z=hz+(SPAWN_Z-hz)*Math.max(r,0)+(r<0?-r*L.approach*(isFP()?0.35:6):0); // 到達後は手前へ抜ける（一人称ではゆっくり）
       const startX=m.target.x*0.15, startY=m.target.y*0.2+0.6;
       const k=Math.min(1,1-r);
       m.obj.position.set(startX+(m.target.x-startX)*k, startY+(m.target.y-startY)*k, z);
@@ -1004,7 +1166,7 @@ function loop(){
 function updateAttack(m,t,dt){
   const W=DEF_WIN[cfg.level];
   if(m.state==="wait" && t>=m.spawn && m.arrive<G.end){
-    m.obj=makeGlove(m.id); m.obj.scale.setScalar(cfg.view==="fp"?0.2:0.55); scene.add(m.obj); m.state="fly";
+    m.obj=makeGlove(m.id); m.obj.scale.setScalar(isFP()?0.2:0.55); scene.add(m.obj); m.state="fly";
     if(m.spoken && cfg.mode==="guard" && cfg.level==="easy") speak(m.spoken.map(a=>ATK[a].short).join("、"));
   }
   if(m.state==="fly"){
@@ -1056,6 +1218,7 @@ function finish(){
   const dn=dall.ok+dall.hit, dacc=dn?Math.round(dall.ok/dn*100):0;
   const showM=cfg.mode!=="guard", showD=cfg.mode!=="mitt";
   $("#rAccBox").hidden=$("#rPerfBox").hidden=$("#rMittPanel").hidden=!showM; $("#rDefBox").hidden=$("#rDefPanel").hidden=!showD;
+  $("#rMeta").textContent=`${OPT.mode.label[cfg.mode]}／${OPT.level.label[cfg.level]}／${OPT.dur.label[cfg.dur]}`;
   $("#rScore").textContent=g.score; $("#rAcc").textContent=acc+"%"; $("#rDef").textContent=dacc+"%"; $("#rMax").textContent=g.maxCombo; $("#rPerf").textContent=g.perfect;
   const best=loadBest(), bk=bestKey(), prev=best[bk]||0;
   if(g.score>prev){ best[bk]=g.score; try{localStorage.setItem("arm_best",JSON.stringify(best));}catch(e){} }
@@ -1089,7 +1252,7 @@ function finish(){
    起動
    ===================================================================== */
 async function begin(m){
-  mode=m; audio(); $("#err").hidden=true;
+  mode=m; audio(); $("#err").hidden=true; demoStop();
   try{ wake=await navigator.wakeLock?.request("screen"); }catch(e){}
   if(m==="cam"){
     const st=$("#status");
@@ -1098,7 +1261,7 @@ async function begin(m){
       if(!video.srcObject){ st.textContent="カメラを起動中…"; await initCamera(); }
       if(!landmarker){ await initPose(msg=>st.textContent=msg); }
     }catch(e){
-      console.error(e); st.hidden=true; $("#menu").hidden=false; stopCamera();
+      console.error(e); st.hidden=true; $("#menu").hidden=false; stopCamera(); demoStart();
       const msg = e.message==="NO_API"||!isSecureContext ? "このページはHTTPSで開く必要があります（カメラの安全上の制約）。GitHub Pages などに置いて https:// のURLで開いてください。"
         : e.name==="NotAllowedError" ? "カメラの使用が許可されていません。ブラウザの設定でこのサイトのカメラを「許可」にしてから、もう一度お試しください。"
         : e.name==="NotFoundError" ? "カメラが見つかりません。「カメラなしで試す」で動作を確認できます。"
@@ -1112,7 +1275,7 @@ $("#startCam").addEventListener("click",()=>begin("cam"));
 $("#startTap").addEventListener("click",()=>begin("tap"));
 $("#stopBtn").addEventListener("click",()=>{ if(G) finish(); });
 $("#again").addEventListener("click",()=>begin(mode));
-$("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); });
+$("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); demoStart(); });
 
 // タップ／キーボード入力（カメラなしモード・PCでの動作確認用）
 // 防御ボタン（キーボードは Q=正面 A=左 D=右 S=あご）
@@ -1132,7 +1295,7 @@ addEventListener("keydown",e=>{ if(!G) return; const id=Number(e.key);
   if(id>=1&&id<=6&&cfg.mode!=="guard") onPunch(handOf(id),PUNCH[id].kind,now());
   const dk={q:"front",a:"gL",d:"gR",s:"chin"}[e.key.toLowerCase()]; if(dk&&cfg.mode!=="mitt") tapDefense(dk); });
 
-renderMenu(); renderPad();
+renderMenu(); renderPad(); demoStart();
 document.addEventListener("click",e=>{ if(e.target.closest(".seg button")) renderPad(); });
 raf=requestAnimationFrame(loop);
 </script>
