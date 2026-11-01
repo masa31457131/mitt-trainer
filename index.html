@@ -253,8 +253,10 @@ td.n{text-align:right;font-family:var(--f-num);font-weight:900;font-size:18px;fo
     <div class="group">
       <h2>カメラと表示</h2>
       <div class="row"><span class="k">表示</span><div class="seg" data-key="view"></div></div>
+      <div class="row"><span class="k">グローブ</span><div class="seg" data-key="glove"></div></div>
       <div class="row"><span class="k">構え</span><div class="seg" data-key="stance"></div></div>
       <div class="row"><span class="k">判定の感度</span><div class="seg" data-key="sens"></div></div>
+      <div class="row"><span class="k">判定AI</span><div class="seg" data-key="ai"></div></div>
       <div class="row"><span class="k">音声コール</span><div class="seg" data-key="voice"></div></div>
       <div class="row"><span class="k">骨格表示</span><div class="seg" data-key="skel"></div></div>
     </div>
@@ -337,7 +339,11 @@ td.n{text-align:right;font-family:var(--f-num);font-weight:900;font-size:18px;fo
    ===================================================================== */
 const MP_VER = "0.10.14";
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
-const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+// 判定AI：高精度＝full（関節の位置、特に奥行きが安定）／軽量＝lite（古い端末向け）
+const MODEL_URLS = {
+  full:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  lite:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"};
+let loadedModel=null;
 
 // パンチ番号：1ジャブ 2ストレート 3前手フック 4後ろ手フック 5前手アッパー 6後ろ手アッパー
 // kind: straight / hook / upper、lead: 前手かどうか
@@ -356,6 +362,8 @@ const OPT = {
   voice:{label:{on:"あり",off:"なし"},def:"on"},
   skel:{label:{on:"表示",off:"非表示"},def:"off"},
   view:{label:{cam:"自分の映像",fp:"グローブのみ（一人称）"},def:"cam"},
+  glove:{label:{real:"リアル",glass:"透明"},def:"real"},
+  ai:{label:{full:"高精度",lite:"軽量"},def:"full"},
 };
 const LEVEL = { // approach=ミットが奥から届くまでの秒数, step=コンボ内の間隔, gap=コンボ間の休み, win=判定の許容秒
   easy:{approach:2.4,step:0.75,gap:1.8,win:0.5,mult:1},
@@ -658,7 +666,74 @@ function gloveGlassMat(color,base=0.08,rim=0.55){
   });
 }
 let gloves=null;
-function buildGloves(){
+/* ---------- リアルなボクシンググローブ ----------
+   革の質感（細かいシボの凹凸＋つや）、ふくらんだ拳の部分、指の縫い目、親指、手首のベルトと白いライン、甲のロゴ。
+   作り方：球を変形して拳の形にする（前＝ナックル側を大きく、手のひら側は平たく、手首へ向けて細く）。
+   向き：ナックルが -z（奥）、親指は体の内側。 */
+function leatherTex(){ // 革のシボ（細かい凹凸）
+  return canvasTex(256,256,(x,w,h)=>{
+    const img=x.createImageData(w,h);
+    for(let i=0;i<w*h;i++){ const v=128+(Math.random()-.5)*70; img.data[i*4]=img.data[i*4+1]=img.data[i*4+2]=v; img.data[i*4+3]=255; }
+    x.putImageData(img,0,0); x.globalAlpha=.35; x.filter="blur(1px)"; x.drawImage(x.canvas,0,0); });
+}
+function logoTex(){
+  return canvasTex(256,96,(x,w,h)=>{ x.clearRect(0,0,w,h);
+    x.fillStyle="rgba(255,255,255,.92)"; x.textAlign="center"; x.textBaseline="middle";
+    let f=60; do{ x.font=`900 ${f}px 'Big Shoulders Display', Impact, sans-serif`; f-=2; }while(x.measureText("MITT WORK").width>w-16 && f>20);   // 枠に収まる大きさに
+    x.fillText("MITT WORK",w/2,h/2+2); });
+}
+function gloveShape(){ // 拳の形に変形した球
+  const geo=new THREE.SphereGeometry(1,56,36), p=geo.attributes.position, v=new THREE.Vector3();
+  for(let i=0;i<p.count;i++){
+    v.fromBufferAttribute(p,i);
+    const front=Math.max(0,-v.z), back=Math.max(0,v.z);
+    let x=v.x*0.088*(1+0.1*front), y=v.y*0.079*(v.y<0?0.8:1), z=v.z*0.112*(1+0.1*front);
+    y+=0.012*front*front;                                   // ナックル側を少し持ち上げる
+    x*=1-0.28*back*back; y*=1-0.22*back*back;               // 手首へ向けて細く
+    if(v.y>0.2 && v.z<-0.2 && v.z>-0.6) y-=0.0035*Math.sin((v.z+0.2)/-0.4*Math.PI); // 指の付け根の浅いくぼみ
+    p.setXYZ(i,x,y,z);
+  }
+  geo.computeVertexNormals(); return geo;
+}
+function buildRealGloves(){
+  const g=new THREE.Group(), P={}, bump=leatherTex(), shape=gloveShape(), logo=logoTex();
+  bump.wrapS=bump.wrapT=THREE.RepeatWrapping; bump.repeat.set(3,3);
+  for(const h of ["L","R"]){
+    const ls=h==="L"?-1:1, col=h==="L"?0xC4182A:0x1D4FB8, gl=new THREE.Group();
+    // 映り込み用の環境マップは使わない（一部の端末で正しく作れず真っ白になるため）。照明とクリアコートで革のつやを出す
+    const leather=new THREE.MeshPhysicalMaterial({color:col,roughness:0.45,metalness:0,clearcoat:0.6,clearcoatRoughness:0.28,bumpMap:bump,bumpScale:0.0012});
+    const dark=new THREE.MeshPhysicalMaterial({color:new THREE.Color(col).multiplyScalar(0.55),roughness:0.6});
+    const white=new THREE.MeshPhysicalMaterial({color:0xE9E9E4,roughness:0.55,clearcoat:0.3});
+    // 拳
+    const fist=new THREE.Mesh(shape,leather); gl.add(fist);
+    // 指の縫い目（甲側を横切るステッチ）
+    const seam=new THREE.CatmullRomCurve3([...Array(9)].map((_,i)=>{ const a=-1.05+i*0.2625; return new THREE.Vector3(Math.sin(a)*0.087,Math.cos(a)*0.074+0.006,-0.058); }));
+    gl.add(new THREE.Mesh(new THREE.TubeGeometry(seam,40,0.0022,6,false),dark));
+    // 親指（拳の内側に沿わせる）
+    const th=new THREE.Mesh(new THREE.SphereGeometry(1,28,18),leather); th.scale.set(0.028,0.031,0.068);
+    th.position.set(-ls*0.071,-0.016,-0.028); th.rotation.set(0.15,-ls*0.32,-ls*0.25); gl.add(th);
+    const thTie=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.03,10),dark); thTie.position.set(-ls*0.066,-0.02,-0.085); thTie.rotation.z=Math.PI/2; gl.add(thTie);
+    // 手首（カフ）とベルト
+    const cuff=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.067,0.12,40),leather); cuff.rotation.x=Math.PI/2; cuff.position.z=0.125; gl.add(cuff);
+    const strap=new THREE.Mesh(new THREE.CylinderGeometry(0.0695,0.0715,0.06,40),leather); strap.rotation.x=Math.PI/2; strap.position.z=0.115; gl.add(strap);
+    const line=new THREE.Mesh(new THREE.CylinderGeometry(0.0718,0.0722,0.012,40),white); line.rotation.x=Math.PI/2; line.position.z=0.1; gl.add(line);
+    // 手首のバンデージ（白い布）と前腕：腕を伸ばしたとき手首の穴が見えないように
+    const wrap=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.052,0.05,28),new THREE.MeshStandardMaterial({color:0xEDEDE8,roughness:0.95})); wrap.rotation.x=Math.PI/2; wrap.position.z=0.205; gl.add(wrap);
+
+    // 甲のロゴ
+    const lg=new THREE.Mesh(new THREE.PlaneGeometry(0.07,0.026),new THREE.MeshBasicMaterial({map:logo,transparent:true,depthWrite:false}));
+    lg.position.set(0,0.081,0.012); lg.rotation.x=-Math.PI/2+0.12; gl.add(lg);
+    // 前腕：手首から、画面の下にある肘へ向けて毎フレーム置き直す（updateGloves）
+    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.046,0.056,1,28,1,true),new THREE.MeshStandardMaterial({color:0xC99372,roughness:0.75,side:THREE.DoubleSide}));
+    g.add(arm);
+    g.add(gl); P[h]={obj:gl, arm, pos:null, q:new THREE.Quaternion(), anim:null, hold:null};
+  }
+  // グローブ専用の照明（キーライトと、輪郭を出す逆光）
+  const key=new THREE.DirectionalLight(0xffffff,0.8); key.position.set(0.6,1.2,1.2); g.add(key);
+  const rim=new THREE.DirectionalLight(0x9fb8ff,0.6); rim.position.set(-1,0.4,-1.5); g.add(rim);
+  return {g,P,f:{},cache:{},lastWl:null,kind:"real"};
+}
+function buildGlassGloves(){
   const g=new THREE.Group(), sph=new THREE.SphereGeometry(1,28,18), P={};
   for(const h of ["L","R"]){
     const col=h==="L"?0xE5384F:0x3B8BEB, ls=h==="L"?-1:1, m=gloveGlassMat(col), gl=new THREE.Group();
@@ -672,8 +747,9 @@ function buildGloves(){
     glow.scale.set(0.3,0.3,1); gl.add(glow);
     g.add(gl); P[h]={obj:gl, pos:null, q:new THREE.Quaternion(), anim:null, hold:null};
   }
-  return {g,P,f:{},cache:{},lastWl:null};
+  return {g,P,f:{},cache:{},lastWl:null,kind:"glass"};
 }
+const buildGloves=()=>cfg.glove==="glass"?buildGlassGloves():buildRealGloves();
 
 /* 揺れ止め（One Euro Filter）：遅い動きは強く抑え、速い動き（パンチ）は遅れずに追従。表示専用で判定には使わない */
 class OneEuro{
@@ -724,6 +800,7 @@ function punchFrame(H,hand,t){
 
 // 毎フレーム：グローブの位置と向きを決める
 function updateGloves(wl,t){
+  if(gloves && gloves.kind!==cfg.glove){ scene.remove(gloves.g); gloves=null; }   // 「グローブ」設定を変えたら作り直す
   if(!gloves){ gloves=buildGloves(); scene.add(gloves.g); }
   gloves.g.visible=true;
   const F=gloves, isNew=wl&&wl!==F.lastWl; F.lastWl=wl;
@@ -765,6 +842,12 @@ function updateGloves(wl,t){
     const pf=punchFrame(H,hand,t);
     const pos=pf?base.p.clone().lerp(pf.p,pf.w):base.p, q=pf?base.q.clone().slerp(pf.q,pf.w):base.q;
     H.pos=pos; H.obj.position.copy(pos); H.obj.quaternion.copy(q);
+    if(H.arm){   // 前腕：手首の後ろ → 肘（肩の下、画面の外）
+      const wristEnd=new THREE.Vector3(0,0,0.22).applyQuaternion(q).add(pos);
+      const elbow=new THREE.Vector3(ls*0.21,-0.52,0.12), d=elbow.clone().sub(wristEnd), len=d.length();
+      H.arm.position.copy(wristEnd).addScaledVector(d,0.5); H.arm.scale.set(1,len,1);
+      H.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,-1,0),d.normalize());
+    }
   }
 }
 function hideGloves(){ if(gloves){ gloves.g.visible=false; gloves.f={}; gloves.cache={}; gloves.lastWl=null; for(const h in gloves.P){ gloves.P[h].anim=null; gloves.P[h].hold=null; gloves.P[h].gw=0; } } }
@@ -801,54 +884,11 @@ function applyView(){
     if(ringSet) ringSet.visible=false; scene.add(grid); }
   video.classList.toggle("ghost",fp);
 }
-/* メニュー背景のデモ（ゲームセンターの「デモ画面」）
-   ミットが飛んできて、透明なグローブがその技で打ち抜く。説明を読まなくても遊び方が分かるように */
-let demo=null;
-const DEMO_SEQ=[1,2,3,2,5,4,1,6];
-const reducedMotion=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
-function isFP(){ return demo!==null || cfg.view==="fp"; }
-function demoStart(){
-  if(demo) return;
-  demo={next:now()+0.6,items:[],i:0};
-  applyView(); demoFrame();
-  if(reducedMotion()){ const m={id:1,obj:makeMitt(1),target:fpTargetPos(1),static:true}; m.obj.scale.setScalar(mittScale()); m.obj.position.copy(m.target); scene.add(m.obj); demo.items.push(m); }
-}
-function demoStop(){
-  if(!demo) return;
-  demo.items.forEach(m=>removeMitt(m)); demo=null; cam.clearViewOffset(); hideGloves(); applyView();
-  // デモの破片も片付ける（視点が近づくと大きく残って見えるため）
-  for(const sp of sparks){ scene.remove(sp.m); sp.m.geometry.dispose(); sp.m.material.dispose(); } sparks.length=0;
-}
-// リング（左側）の中心で動いて見えるよう、3Dの描画位置をずらす
-function demoFrame(){
-  const st=document.querySelector(".stage"); if(!st||!demo) return;
-  const r=st.getBoundingClientRect(), W=innerWidth, H=innerHeight;
-  const cx=r.left+r.width/2, cy=r.top+Math.min(r.height,H)/2;
-  cam.setViewOffset(W,H,W/2-cx,H/2-cy,W,H);
-}
-function demoTick(t){
-  updateGloves(null,t); updateFpCamera(t);
-  if(reducedMotion()) return;
-  if(t>=demo.next){
-    const id=DEMO_SEQ[demo.i++%DEMO_SEQ.length], m={id,obj:makeMitt(id),target:fpTargetPos(id),arrive:t+1.25};
-    m.obj.scale.setScalar(mittScale()); scene.add(m.obj); demo.items.push(m); demo.next=t+1.45;
-  }
-  for(const m of demo.items){
-    if(m.static||m.done) continue;
-    const r=(m.arrive-t)/1.25, k=Math.min(1,1-r), z=m.target.z+(-16-m.target.z)*Math.max(r,0);
-    const sx=m.target.x*0.15, sy=m.target.y*0.2+0.6;
-    m.obj.position.set(sx+(m.target.x-sx)*k, sy+(m.target.y-sy)*k, z);
-    if(!m.punched && t>=m.arrive-0.13){ m.punched=true; startGlovePunch(handOf(m.id),PUNCH[m.id].kind); }
-    if(t>=m.arrive){ burst(m.obj.position.clone(),COL[handOf(m.id)],m.id%3===0); removeMitt(m); m.done=true; }
-  }
-  demo.items=demo.items.filter(m=>!m.done);
-}
-addEventListener("resize",()=>{ if(demo) demoFrame(); });
-const DEMO_CAM=new THREE.Vector3(0,0.06,1.05);   // デモでは少し引いて、ミットとグローブ全体を見せる
+function isFP(){ return cfg.view==="fp"; }
 function updateFpCamera(t){
   if(!headF) headF=[new OneEuro(0.8,0.6),new OneEuro(0.8,0.6)];
   const x=headF[0].filter(-headMove.x*0.38*0.5,t), y=headF[1].filter(-headMove.y*0.38*0.5,t);
-  const base=demo?DEMO_CAM:FP.cam;
+  const base=FP.cam;
   cam.position.set(base.x+x,base.y+y,base.z); cam.lookAt(x*0.5,-0.05+y*0.5,-3);
 }
 
@@ -874,14 +914,17 @@ async function initPose(onProgress){
   onProgress("AIモデルを読み込み中…（初回は10〜20秒）");
   const vision=await import(`${MP_URL}/vision_bundle.mjs`);
   const fileset=await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
-  const opts=d=>({baseOptions:{modelAssetPath:MODEL_URL,delegate:d},runningMode:"VIDEO",numPoses:1,
-    minPoseDetectionConfidence:0.5,minPosePresenceConfidence:0.5,minTrackingConfidence:0.5});
+  // 信頼度を少し上げ、推定が不確かなフレーム（ぶれ・跳び）を使わないようにする
+  const opts=d=>({baseOptions:{modelAssetPath:MODEL_URLS[cfg.ai],delegate:d},runningMode:"VIDEO",numPoses:1,
+    minPoseDetectionConfidence:0.6,minPosePresenceConfidence:0.6,minTrackingConfidence:0.6});
   try{ landmarker=await vision.PoseLandmarker.createFromOptions(fileset,opts("GPU")); }
   catch(e){ console.warn("GPU失敗→CPUで再試行",e); landmarker=await vision.PoseLandmarker.createFromOptions(fileset,opts("CPU")); }
+  loadedModel=cfg.ai;
 }
 async function initCamera(){
   if(!navigator.mediaDevices?.getUserMedia) throw new Error("NO_API");
-  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:960},height:{ideal:540}},audio:false});
+  // 解像度を上げると手首の位置が安定する（処理が重い端末では「判定AI：軽量」へ）
+  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false});
   video.srcObject=stream; video.hidden=false; await video.play();
 }
 function stopCamera(){ const s=video.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); video.srcObject=null; video.hidden=true; }
@@ -928,8 +971,11 @@ function classifyPunch(T,old,mid,cur,k){
   // アッパー：曲げた肘のまま、胸〜あごの高さから上へ
   if(up>=0.6*mag && old.y<0.75 && old.y>-0.6 && cur.y<-0.25 && old.ang<=140 && cur.ang<=150 && dReach>-0.2 && dz<=0.15*mag && !T.wasLow)   // 拳が体の方へ引かれる動き（耳の横へのガード）は除外
     return {kind:"upper",score:up};
-  // ストレート系：肘が伸びきって、拳が遠くへ
-  if(dReach>=0.45*k && cur.ang>=130 && dAng>=12 && down<=0.35*mag && up<0.6*mag && (fwd>=0.35*mag || dReach>=0.6*k))
+  // ストレート系：肘が伸びきって（または拳が腕の長さの8割以上まで届いて）、拳が遠くへ
+  // 肘の角度の基準は、開始前に測った「その人の構えの角度」＋38°（115〜135°の範囲）
+  const angThr=T.cal?Math.min(135,Math.max(115,T.cal.ang+38)):130;
+  const extended=cur.ang>=angThr || cur.reach>=0.82*cur.arm;
+  if(dReach>=0.45*k && extended && (dAng>=12 || cur.reach>=0.82*cur.arm) && down<=0.35*mag && up<0.6*mag && (fwd>=0.35*mag || dReach>=0.6*k))
     return {kind:"straight",score:dReach};
   return null;
 }
@@ -950,18 +996,23 @@ function analyzePose(res,nowMs){
     const raw={x:(w.x-midX)/sw2, y:(w.y-shY)/sw2, z:wl[wi].z/swW,           // 手首（肩の中心からの位置）
       elbY:(lm[ei].y-lm[si].y)/sw2,                                          // 肘が肩よりどれだけ下か
       ang:angleDeg(wl[si],wl[ei],wl[wi]),                                    // 肘の角度（180°＝まっすぐ）
-      reach:Math.hypot(wl[wi].x-wl[si].x,wl[wi].y-wl[si].y,wl[wi].z-wl[si].z)/swW};  // 肩から手首までの距離
+      reach:Math.hypot(wl[wi].x-wl[si].x,wl[wi].y-wl[si].y,wl[wi].z-wl[si].z)/swW,   // 肩から手首までの距離
+      arm:(Math.hypot(wl[ei].x-wl[si].x,wl[ei].y-wl[si].y,wl[ei].z-wl[si].z)+Math.hypot(wl[wi].x-wl[ei].x,wl[wi].y-wl[ei].y,wl[wi].z-wl[ei].z))/swW};  // 腕の長さ（上腕＋前腕）
     T.s=smooth(T.s,raw); const cur={t:nowMs,...T.s}; T.hist.push(cur);
+    // 開始前のカウントダウン中に、その人の構え（肘の角度・拳までの距離）を測る
+    if(G && now()<G.t0){ (T.calib=T.calib||[]).push({ang:cur.ang,reach:cur.reach}); if(T.calib.length>120) T.calib.shift(); }
+    else if(G && !T.cal && T.calib?.length>=10){ const med=a=>a.slice().sort((x,y)=>x-y)[a.length>>1];
+      T.cal={ang:med(T.calib.map(c=>c.ang)), reach:med(T.calib.map(c=>c.reach))}; }
     // 直前0.5秒に手が胸より下にあった ＝ ガードを上げ直しているだけ（アッパーにしない）
     if(cur.y>0.85) T.lowAt=nowMs; T.wasLow=nowMs-(T.lowAt||-1e9)<500;
     while(T.hist.length&&nowMs-T.hist[0].t>WIN_MAX+40) T.hist.shift();
     // 一度打った手は「引き戻した」ら再び受け付ける
     if(!T.armed){
-      const back = T.last==="straight" ? (cur.reach<T.peakReach-0.35 || cur.ang<115) : (nowMs-T.firedAt>350);
+      const back = T.last==="straight" ? (cur.reach<T.peakReach-0.35 || cur.ang<115 || (T.cal && cur.reach<T.cal.reach+0.3)) : (nowMs-T.firedAt>350);
       T.peakReach=Math.max(T.peakReach,cur.reach);
       if(back || nowMs-T.firedAt>1200) T.armed=true; else continue;
     }
-    if(T.hist.length<4) continue;
+    if(T.hist.length<3) continue;   // フレームが少ない端末（15fps程度）でも判定できるように
     // いくつかの時間幅で調べ、いちばん条件に合うものを採用
     let best=null;
     for(const old of T.hist){
@@ -983,17 +1034,25 @@ function analyzePose(res,nowMs){
       スリップ：頭が横へ／ダッキング：頭が下へ／スウェー：体が後ろへ（肩幅が小さく映る）
   ・MediaPipeの画像は鏡像ではないため、本人の左手は画像の右側（xが大きい側）に映る点に注意。
 */
-let defState={}, headBase=null, tapDef={k:"",until:0};
+let defState={}, defCnt={}, headBase=null, tapDef={k:"",until:0};
 function computeDefense(lm,sw,shY){
   const n=lm[0];
   if((n.visibility??1)<0.5){ defState={}; return; }
   const rel=w=>({dx:(w.x-n.x)/sw, dy:(w.y-n.y)/sw, ok:(w.visibility??1)>0.4});
   const L=rel(lm[15]), R=rel(lm[16]), k=SENS[cfg.sens], neck=(shY-n.y)/sw;
-  const s={};
-  s.front = L.ok&&R.ok && Math.abs(L.dx)<0.6 && Math.abs(R.dx)<0.6 && L.dy<0.25 && R.dy<0.25 && L.dy>-1 && R.dy>-1;
-  s.gL = L.ok && L.dx>0.25 && L.dx<1.3 && L.dy<0.35 && L.dy>-1;
-  s.gR = R.ok && R.dx<-0.25 && R.dx>-1.3 && R.dy<0.35 && R.dy>-1;
-  s.chin = L.ok&&R.ok && Math.abs(L.dx)<0.7 && Math.abs(R.dx)<0.7 && L.dy>=0.2 && R.dy>=0.2 && L.dy<neck+0.45 && R.dy<neck+0.45;
+  /* ガードは「意識してその形を取ったとき」だけ判定する（ふつうの構えでは成立しない）
+     左右ガード：手首が耳の高さ（鼻とほぼ同じ高さ）まで上がっている
+     正面ガード：両手が鼻の高さ近くまで上がり、顔の前にある
+     あごガード：両手が顔の中央に寄り、左右の拳がくっつく距離にある */
+  const s={}, was=defState||{}, e=key=>was[key]?0.06:0;   // いったん判定したら、少し緩い基準で保持する（点滅防止）
+  const gap=Math.abs(L.dx-R.dx);
+  const raw={
+    front: L.ok&&R.ok && Math.abs(L.dx)<0.45+e("front") && Math.abs(R.dx)<0.45+e("front") && L.dy<0.12+e("front") && R.dy<0.12+e("front") && L.dy>-0.9 && R.dy>-0.9,
+    gL: L.ok && L.dx>0.28-e("gL") && L.dx<0.95+e("gL") && L.dy<0.1+e("gL") && L.dy>-0.6-e("gL"),
+    gR: R.ok && R.dx<-0.28+e("gR") && R.dx>-0.95-e("gR") && R.dy<0.1+e("gR") && R.dy>-0.6-e("gR"),
+    chin: L.ok&&R.ok && Math.abs(L.dx)<0.2+e("chin") && Math.abs(R.dx)<0.2+e("chin") && gap<0.42+e("chin") && L.dy>=0.12-e("chin") && R.dy>=0.12-e("chin") && L.dy<neck+0.3 && R.dy<neck+0.3};
+  for(const key in raw){   // 入るときは2フレーム続けて条件を満たしたときだけ（推定の一瞬のぶれで点かないように）
+    if(raw[key]){ defCnt[key]=(defCnt[key]||0)+1; s[key]=was[key]||defCnt[key]>=2; } else { defCnt[key]=0; s[key]=false; } }
   if(!headBase) headBase={x:n.x,y:n.y,sw};
   s.slip = Math.abs(n.x-headBase.x)/headBase.sw > 0.4*k;
   s.duck = (n.y-headBase.y)/headBase.sw > 0.45*k;
@@ -1055,6 +1114,8 @@ function startGame(){
   const L=LEVEL[cfg.level];
   G={t0:now()+3.2,end:0,score:0,combo:0,maxCombo:0,perfect:0,hits:0,total:0,stats:newStats(),dstats:newDStats(),queue:[],nextArrive:0,lastCombo:"",lastT:now()};
   headBase=null; tapDef={k:"",until:0}; headMove={x:0,y:0}; applyView();
+  for(const h of ["L","R"]){ track[h].calib=[]; track[h].cal=null; }   // 構えの測り直し
+  defState={}; defCnt={};
   G.end=G.t0+Number(cfg.dur); G.nextArrive=G.t0+L.approach;
   for(let i=0;i<4;i++) schedule();
   $("#hScore").textContent="0"; $("#hCombo").textContent=""; setFb("","");
@@ -1113,7 +1174,7 @@ function loop(){
   }
   drawSkeleton();
   if(G && isFP()){ updateGloves(mode==="tap"?null:lastWorld, t); updateFpCamera(t); }
-  if(!G){ if(demo) demoTick(t); render3D(); return; }
+  if(!G){ render3D(); return; }
 
   // カウントダウン（カメラ時は上半身が映っているか確認）
   const st=$("#status");
@@ -1252,16 +1313,17 @@ function finish(){
    起動
    ===================================================================== */
 async function begin(m){
-  mode=m; audio(); $("#err").hidden=true; demoStop();
+  mode=m; audio(); $("#err").hidden=true;
   try{ wake=await navigator.wakeLock?.request("screen"); }catch(e){}
   if(m==="cam"){
     const st=$("#status");
     try{
       $("#menu").hidden=true; st.hidden=false;
       if(!video.srcObject){ st.textContent="カメラを起動中…"; await initCamera(); }
+      if(landmarker && loadedModel!==cfg.ai){ try{landmarker.close();}catch(e){} landmarker=null; }   // 判定AIの設定を変えたら読み込み直す
       if(!landmarker){ await initPose(msg=>st.textContent=msg); }
     }catch(e){
-      console.error(e); st.hidden=true; $("#menu").hidden=false; stopCamera(); demoStart();
+      console.error(e); st.hidden=true; $("#menu").hidden=false; stopCamera();
       const msg = e.message==="NO_API"||!isSecureContext ? "このページはHTTPSで開く必要があります（カメラの安全上の制約）。GitHub Pages などに置いて https:// のURLで開いてください。"
         : e.name==="NotAllowedError" ? "カメラの使用が許可されていません。ブラウザの設定でこのサイトのカメラを「許可」にしてから、もう一度お試しください。"
         : e.name==="NotFoundError" ? "カメラが見つかりません。「カメラなしで試す」で動作を確認できます。"
@@ -1275,7 +1337,7 @@ $("#startCam").addEventListener("click",()=>begin("cam"));
 $("#startTap").addEventListener("click",()=>begin("tap"));
 $("#stopBtn").addEventListener("click",()=>{ if(G) finish(); });
 $("#again").addEventListener("click",()=>begin(mode));
-$("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); demoStart(); });
+$("#toMenu").addEventListener("click",()=>{ $("#result").hidden=true; $("#menu").hidden=false; stopCamera(); renderMenu(); });
 
 // タップ／キーボード入力（カメラなしモード・PCでの動作確認用）
 // 防御ボタン（キーボードは Q=正面 A=左 D=右 S=あご）
@@ -1295,7 +1357,7 @@ addEventListener("keydown",e=>{ if(!G) return; const id=Number(e.key);
   if(id>=1&&id<=6&&cfg.mode!=="guard") onPunch(handOf(id),PUNCH[id].kind,now());
   const dk={q:"front",a:"gL",d:"gR",s:"chin"}[e.key.toLowerCase()]; if(dk&&cfg.mode!=="mitt") tapDefense(dk); });
 
-renderMenu(); renderPad(); demoStart();
+renderMenu(); renderPad();
 document.addEventListener("click",e=>{ if(e.target.closest(".seg button")) renderPad(); });
 raf=requestAnimationFrame(loop);
 </script>
